@@ -16,8 +16,7 @@ use tui_input::{backend::crossterm as input_backend, Input}; // For handling tex
 use zbus::{
     fdo::DBusProxy,
     zvariant::{Structure, Value},
-    Message,
-    MessageStream,
+    Message, MessageStream,
 }; // For D-Bus communication and message handling
 
 // Maximum number of D-Bus messages to retain in memory
@@ -127,7 +126,7 @@ async fn run(
 ) -> Result<()> {
     let mut app = App::default(); // Initialize the application state
     let mut event_stream = EventStream::new(); // Create a stream of terminal events
-    let mut clipboard = Clipboard::new().ok();
+    let mut clipboard = Clipboard::new().unwrap();
 
     loop {
         // Draw the UI, then wait for the next event.
@@ -164,35 +163,44 @@ async fn run(
                                         app.show_details = false;
                                     }
                                     KeyCode::Char('c') => {
-                                        let mut clipboard_status = String::new();
-                                                                                    let file_write_status: String; // Declare here
+                                        let clipboard_status: String;
+                                        let file_write_status: String; // Declare here
 
-                                                                                    let text_to_copy = app.detail_text.clone();
+                                        let text_to_copy = app.detail_text.clone();
 
-                                                                                    // Write to file (this is an async operation, so it must be awaited)
-                                                                                    let file_path = "/tmp/d-buddy-details.txt";
-                                                                                    file_write_status = match fs::write(file_path, text_to_copy.as_bytes()).await {
-                                                                                        Ok(_) => format!("Saved to {}", file_path),
-                                                                                        Err(e) => format!("Failed to save to file: {}", e),
-                                                                                    };
+                                        // Write to file (this is an async operation, so it must be awaited)
+                                        let file_path = "/tmp/d-buddy-details.txt";
+                                        file_write_status = match fs::write(file_path, text_to_copy.as_bytes()).await {
+                                            Ok(_) => format!("Saved to {}", file_path),
+                                            Err(e) => format!("Failed to save to file: {}", e),
+                                        };
 
-                                                                                    if let Some(cb) = &mut clipboard {
-                                                                                        match cb.set_text(text_to_copy.clone()) { // Use text_to_copy
-                                                                                            Ok(_) => {
-                                                                                                // This short sleep is a workaround for Linux clipboard ownership.
-                                                                                                sleep(Duration::from_millis(100));
-                                                                                                clipboard_status = "Copied to clipboard!".to_string();
-                                                                                            }
-                                                                                            Err(e) => {
-                                                                                                clipboard_status = format!("Copy failed: {}", e);
-                                                                                            }
-                                                                                        }
-                                                                                    } else {
-                                                                                        clipboard_status = "Clipboard not available.".to_string();
-                                                                                    }
+                                        clipboard_status = match clipboard.set_text(text_to_copy.clone()) {
+                                            Ok(_) => {
+                                                // This short sleep is a workaround for Linux clipboard ownership.
+                                                sleep(Duration::from_millis(100));
+                                                "Copied to clipboard!".to_string()
+                                            },
+                                            Err(e) => format!("Copy failed: {}", e),
+                                        };
 
-                                                                                    app.status_message = format!("{} | {}", file_write_status, clipboard_status);
-                                                                                }
+                                        // if let Some(cb) = &mut clipboard {
+                                        //     match cb.set_text(text_to_copy.clone()) { // Use text_to_copy
+                                        //         Ok(_) => {
+                                        //             // This short sleep is a workaround for Linux clipboard ownership.
+                                        //             sleep(Duration::from_millis(100));
+                                        //             clipboard_status = "Copied to clipboard!".to_string();
+                                        //         }
+                                        //         Err(e) => {
+                                        //             clipboard_status = format!("Copy failed: {}", e);
+                                        //         }
+                                        //     }
+                                        // } else {
+                                        //     clipboard_status = "Clipboard not available.".to_string();
+                                        // }
+
+                                        app.status_message = format!("{} | {}", file_write_status, clipboard_status);
+                                    }
                                     _ => {} // Ignore other keys
                                 }
                             } else {
@@ -231,11 +239,11 @@ async fn run(
                                                 } else {
                                                     // Attempt to deserialize as a `Structure` first, as this is a common case.
                                                     match body.deserialize::<Structure>() {
-                                                        Ok(structure) => format!("{:#?}", structure),
+                                                        Ok(structure) => format_value(&Value::from(structure)),
                                                         Err(_) => {
                                                             // If that fails, fall back to deserializing as a generic `Value`.
                                                             match body.deserialize::<Value>() {
-                                                                Ok(value) => format!("{:#?}", value),
+                                                                Ok(value) => format_value(&value),
                                                                 Err(e) => format!(
                                                                     "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
                                                                     body_sig,
@@ -401,6 +409,41 @@ fn ui(frame: &mut Frame, app: &mut App) {
                 .block(Block::default().borders(Borders::ALL).title("Keys"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
+    }
+}
+
+// Helper function to format a `zbus::zvariant::Value` in a compact, readable way.
+fn format_value(value: &Value) -> String {
+    match value {
+        Value::U8(v) => v.to_string(),
+        Value::I16(v) => v.to_string(),
+        Value::U16(v) => v.to_string(),
+        Value::I32(v) => v.to_string(),
+        Value::U32(v) => v.to_string(),
+        Value::I64(v) => v.to_string(),
+        Value::U64(v) => v.to_string(),
+        Value::F64(v) => v.to_string(),
+        Value::Bool(v) => v.to_string(),
+        Value::Str(v) => format!("\"{}\"", v),
+        Value::Signature(v) => format!("\'{}\'", v),
+        Value::ObjectPath(v) => v.to_string(),
+        Value::Array(arr) => {
+            let inner: Vec<String> = arr.iter().map(format_value).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Structure(s) => {
+            let inner: Vec<String> = s.fields().iter().map(format_value).collect();
+            format!("({})", inner.join(", "))
+        }
+        Value::Dict(d) => {
+            let inner: Vec<String> = d
+                .iter()
+                .map(|(k, v)| format!("{}: {}", format_value(k), format_value(v)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        // Fallback for types not explicitly handled above.
+        _ => format!("{:?}", value),
     }
 }
 
