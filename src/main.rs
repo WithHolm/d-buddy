@@ -5,7 +5,9 @@ use crossterm::event::{Event, EventStream, KeyCode}; // For handling terminal ev
 use futures::stream::StreamExt; // For extending stream functionality, used with zbus MessageStream
 use ratatui::prelude::*;
 use ratatui::text::Line; // For styled text in the UI
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap}; // UI widgets
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use std::time::{SystemTime, UNIX_EPOCH};
+// UI widgets
 use std::{
     io::{self, stdout},
     thread::sleep,
@@ -36,6 +38,7 @@ struct App {
     mode: Mode,             // Current operating mode (Normal or Filtering)
     input: Input,           // Input buffer for the filtering text
     detail_text: String,    // The formatted string for the currently viewed detail
+    detail_scroll: u16,     // The vertical scroll offset for the detail view
     status_message: String, // A temporary message to show in the status bar
 }
 
@@ -49,6 +52,7 @@ impl Default for App {
             mode: Mode::Normal,               // Start in Normal mode
             input: Input::default(),          // Empty input buffer
             detail_text: String::new(),       // No detail text initially
+            detail_scroll: 0,                 // Start with no scroll
             status_message: String::new(),    // No status message initially
         }
     }
@@ -151,134 +155,107 @@ async fn run(
                  match app.mode {
                     Mode::Normal => {
                         if let Event::Key(key) = event {
-                            // Clear status message on any key press in this mode
                             if !app.status_message.is_empty() {
                                 app.status_message.clear();
                             }
-
-                            // If details popup is shown, handle its closing and copying
-                            if app.show_details {
-                                match key.code {
-                                    KeyCode::Char('s') | KeyCode::Char(' ') | KeyCode::Esc => {
+                            match key.code {
+                                KeyCode::Char('q') => {
+                                    if !app.show_details {
+                                        break
+                                    }
+                                    app.show_details = false;
+                                }
+                                KeyCode::Char('/') => app.mode = Mode::Filtering,
+                                KeyCode::Up => {
+                                    if !app.messages.is_empty() {
+                                        let i = match app.list_state.selected() {
+                                            Some(i) => i.saturating_sub(1),
+                                            None => 0,
+                                        };
+                                        app.list_state.select(Some(i));
+                                        if app.show_details {
+                                            update_detail_text(&mut app);
+                                        }
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if !app.messages.is_empty() {
+                                        let i = match app.list_state.selected() {
+                                            Some(i) => (i + 1).min(app.messages.len() - 1),
+                                            None => 0,
+                                        };
+                                        app.list_state.select(Some(i));
+                                        if app.show_details {
+                                            update_detail_text(&mut app);
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('s') | KeyCode::Char(' ') => {
+                                    if app.show_details {
+                                        app.show_details = false;
+                                    } else {
+                                        update_detail_text(&mut app);
+                                        app.show_details = true;
+                                    }
+                                }
+                                KeyCode::Esc => {
+                                    if app.show_details {
                                         app.show_details = false;
                                     }
-                                    KeyCode::Char('c') => {
-                                        let clipboard_status: String;
-                                        let file_write_status: String; // Declare here
-
+                                }
+                                KeyCode::Char('c') => {
+                                    if app.show_details {
                                         let text_to_copy = app.detail_text.clone();
-
-                                        // Write to file (this is an async operation, so it must be awaited)
                                         let file_path = "/tmp/d-buddy-details.txt";
-                                        file_write_status = match fs::write(file_path, text_to_copy.as_bytes()).await {
+                                        let file_write_status = match fs::write(file_path, text_to_copy.as_bytes()).await {
                                             Ok(_) => format!("Saved to {}", file_path),
                                             Err(e) => format!("Failed to save to file: {}", e),
                                         };
-
-                                        clipboard_status = match clipboard.set_text(text_to_copy.clone()) {
+                                        let clipboard_status = match clipboard.set_text(text_to_copy) {
                                             Ok(_) => {
-                                                // This short sleep is a workaround for Linux clipboard ownership.
                                                 sleep(Duration::from_millis(100));
                                                 "Copied to clipboard!".to_string()
                                             },
                                             Err(e) => format!("Copy failed: {}", e),
                                         };
-
-                                        // if let Some(cb) = &mut clipboard {
-                                        //     match cb.set_text(text_to_copy.clone()) { // Use text_to_copy
-                                        //         Ok(_) => {
-                                        //             // This short sleep is a workaround for Linux clipboard ownership.
-                                        //             sleep(Duration::from_millis(100));
-                                        //             clipboard_status = "Copied to clipboard!".to_string();
-                                        //         }
-                                        //         Err(e) => {
-                                        //             clipboard_status = format!("Copy failed: {}", e);
-                                        //         }
-                                        //     }
-                                        // } else {
-                                        //     clipboard_status = "Clipboard not available.".to_string();
-                                        // }
-
                                         app.status_message = format!("{} | {}", file_write_status, clipboard_status);
                                     }
-                                    _ => {} // Ignore other keys
                                 }
-                            } else {
-                                // Handle key presses in Normal mode (when details are hidden)
-                                match key.code {
-                                    KeyCode::Char('q') => break, // Quit the application
-                                    KeyCode::Down => {
-                                        // Move selection down, guarding against an empty list
-                                        if !app.messages.is_empty() {
-                                            let i = match app.list_state.selected() {
-                                                Some(i) => (i + 1).min(app.messages.len() - 1),
-                                                None => 0,
-                                            };
-                                            app.list_state.select(Some(i));
-                                        }
+                                KeyCode::Char('j') => {
+                                    if app.show_details {
+                                        app.detail_scroll = app.detail_scroll.saturating_add(1);
                                     }
-                                    KeyCode::Up => {
-                                        // Move selection up
-                                        if !app.messages.is_empty() {
-                                            let i = match app.list_state.selected() {
-                                                Some(i) => i.saturating_sub(1),
-                                                None => 0,
-                                            };
-                                            app.list_state.select(Some(i));
-                                        }
-                                    }
-                                    KeyCode::Char('s') | KeyCode::Char(' ') => {
-                                        // Generate detail text and show the popup
-                                        if let Some(selected) = app.list_state.selected() {
-                                            if let Some(message) = app.messages.get(selected) {
-                                                let body = message.body();
-                                                let body_sig = body.signature();
-
-                                                app.detail_text = if body_sig.to_string().is_empty() {
-                                                    "[No message body]".to_string()
-                                                } else {
-                                                    // Attempt to deserialize as a `Structure` first, as this is a common case.
-                                                    match body.deserialize::<Structure>() {
-                                                        Ok(structure) => format_value(&Value::from(structure)),
-                                                        Err(_) => {
-                                                            // If that fails, fall back to deserializing as a generic `Value`.
-                                                            match body.deserialize::<Value>() {
-                                                                Ok(value) => format_value(&value),
-                                                                Err(e) => format!(
-                                                                    "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
-                                                                    body_sig,
-                                                                    e
-                                                                ),
-                                                            }
-                                                        }
-                                                    }
-                                                };
-                                                app.show_details = true;
-                                            }
-                                        }
-                                    }
-                                    KeyCode::Char('/') => {
-                                        // Enter Filtering mode
-                                        app.mode = Mode::Filtering;
-                                    }
-                                    _ => {} // Ignore other keys
                                 }
+                                KeyCode::Char('k') => {
+                                    if app.show_details {
+                                        app.detail_scroll = app.detail_scroll.saturating_sub(1);
+                                    }
+                                }
+                                KeyCode::PageDown => {
+                                    if app.show_details {
+                                        app.detail_scroll = app.detail_scroll.saturating_add(10);
+                                    }
+                                }
+                                KeyCode::PageUp => {
+                                    if app.show_details {
+                                        app.detail_scroll = app.detail_scroll.saturating_sub(10);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
                     Mode::Filtering => {
                         if let Event::Key(key) = event {
-                            // Handle key presses in Filtering mode
                             match key.code {
                                 KeyCode::Enter => {
-                                    app.mode = Mode::Normal; // Exit Filtering mode
+                                    app.mode = Mode::Normal;
                                 }
                                 KeyCode::Esc => {
-                                    app.input.reset(); // Clear filter input
-                                    app.mode = Mode::Normal; // Exit Filtering mode
+                                    app.input.reset();
+                                    app.mode = Mode::Normal;
                                 }
                                 _ => {
-                                    // Pass other key events to the input widget
                                     input_backend::to_input_request(&event)
                                         .and_then(|req| app.input.handle(req));
                                 }
@@ -290,6 +267,32 @@ async fn run(
         }
     }
     Ok(())
+}
+
+/// A helper function to generate the detail text for the currently selected message.
+fn update_detail_text(app: &mut App) {
+    if let Some(selected) = app.list_state.selected() {
+        if let Some(message) = app.messages.get(selected) {
+            let body = message.body();
+            let body_sig = body.signature();
+
+            app.detail_text = if body_sig.to_string().is_empty() {
+                "[No message body]".to_string()
+            } else {
+                match body.deserialize::<Structure>() {
+                    Ok(structure) => format_value(&Value::from(structure)),
+                    Err(_) => match body.deserialize::<Value>() {
+                        Ok(value) => format_value(&value),
+                        Err(e) => format!(
+                            "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
+                            body_sig, e
+                        ),
+                    },
+                }
+            };
+            app.detail_scroll = 0;
+        }
+    }
 }
 
 // Draws the application's user interface
@@ -314,6 +317,7 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .filter(|msg| {
             // Get D-Bus message header details
             let header = msg.header();
+
             let sender = header.sender().map(|s| s.as_str()).unwrap_or("");
             let member = header.member().map(|s| s.as_str()).unwrap_or("");
             let path = header.path().map(|p| p.as_str()).unwrap_or("");
@@ -325,8 +329,14 @@ fn ui(frame: &mut Frame, app: &mut App) {
         .map(|msg| {
             // Format each message into a displayable string
             let header = msg.header();
+            // let now = SystemTime::now().;
+            // let secs = now.as_secs();
+            // let millis = now.subsec_millis();
+            // let timestamp = format!("{}.{:03}", secs, millis);
+            let timestamp = "mm.ss.000";
             let text = format!(
-                "sender: {}, member: {}, path:જી {}",
+                "[{}] sender: {}, member: {}, path:જી {}",
+                timestamp,
                 header.sender().map(|s| s.as_str()).unwrap_or(""),
                 header.member().map(|s| s.as_str()).unwrap_or(""),
                 header.path().map(|p| p.as_str()).unwrap_or(""),
@@ -349,16 +359,29 @@ fn ui(frame: &mut Frame, app: &mut App) {
 
     // If show_details is true, render the message details popup
     if app.show_details {
-        // Create a block for the details popup
-        let block = Block::default()
-            .title("Message Details")
-            .borders(Borders::ALL);
-        // Calculate the centered area for the popup
-        let area = centered_rect(60, 60, frame.area());
-        // Create a Paragraph widget with the pre-formatted detail text
+        let area = centered_rect(80, 80, frame.area());
+        let popup_inner_height = area.height.saturating_sub(2);
+
+        // Check if scrolling is possible
+        let num_text_lines = app.detail_text.lines().count() as u16;
+        let can_scroll_up = app.detail_scroll > 0;
+        let can_scroll_down = app.detail_scroll + popup_inner_height < num_text_lines;
+
+        // Create a dynamic title with scroll indicators
+        let title = match (can_scroll_up, can_scroll_down) {
+            (true, true) => "Message Details [↑...↓]",
+            (true, false) => "Message Details [↑...]",
+            (false, true) => "Message Details [...↓]",
+            (false, false) => "Message Details",
+        };
+        let block = Block::default().title(title).borders(Borders::ALL);
+
+        // Create a Paragraph widget with the pre-formatted detail text and scroll state
         let paragraph = Paragraph::new(app.detail_text.clone())
             .block(block)
-            .wrap(Wrap { trim: false }); // Allow text wrapping
+            .wrap(Wrap { trim: false })
+            .scroll((app.detail_scroll, 0));
+
         frame.render_widget(Clear, area); // Clear the background behind the popup
         frame.render_widget(paragraph, area); // Render the details paragraph
     }
@@ -384,10 +407,16 @@ fn ui(frame: &mut Frame, app: &mut App) {
                     ": copy | ".into(),
                     "s".bold(),
                     "/".dim(),
-                    "space".bold(),
-                    "/".dim(),
                     "esc".bold(),
-                    ": close".into(),
+                    ": close | ".into(),
+                    "j".bold(),
+                    "/".dim(),
+                    "k".bold(),
+                    "/".dim(),
+                    "PgUp".bold(),
+                    "/".dim(),
+                    "PgDn".bold(),
+                    ": scroll".into(),
                 ])
             } else {
                 Line::from(vec![
@@ -514,8 +543,10 @@ fn format_value(value: &Value) -> String {
 
                 // Special Case 2: Homogenous array of simple types.
                 let first_val = &arr[0];
-                let is_simple_type =
-                    !matches!(first_val, Value::Array(_) | Value::Structure(_) | Value::Dict(_));
+                let is_simple_type = !matches!(
+                    first_val,
+                    Value::Array(_) | Value::Structure(_) | Value::Dict(_)
+                );
 
                 if is_simple_type {
                     let first_type_str = get_value_type_str(first_val);
@@ -606,15 +637,25 @@ fn format_value(value: &Value) -> String {
                     let lines: Vec<&str> = formatted_value_segment.lines().collect();
 
                     if lines.is_empty() {
-                        dict_output_lines.push(format!("{}{} {}:", inner_indent_str, key_str, padding_for_key));
+                        dict_output_lines.push(format!(
+                            "{}{} {}:",
+                            inner_indent_str, key_str, padding_for_key
+                        ));
                     } else {
-                        dict_output_lines.push(format!("{}{} {}: {}", inner_indent_str, key_str, padding_for_key, lines[0]));
+                        dict_output_lines.push(format!(
+                            "{}{} {}: {}",
+                            inner_indent_str, key_str, padding_for_key, lines[0]
+                        ));
 
                         // Calculate the column where the value starts for subsequent lines.
                         // This is current indent + key_str_len + padding + ": " (which is 2 characters)
                         let value_start_col = (inner_indent_for_value * 2) + max_key_len + 2;
                         for &line in lines.iter().skip(1) {
-                            dict_output_lines.push(format!("{}{}", " ".repeat(value_start_col), line));
+                            dict_output_lines.push(format!(
+                                "{}{}",
+                                " ".repeat(value_start_col),
+                                line
+                            ));
                         }
                     }
                 }
