@@ -553,61 +553,28 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
         if let Some(item) = app.filtered_and_sorted_items.get(selected) {
             let mut header_lines: Vec<Line> = Vec::new();
 
-            header_lines.push(Line::from(vec![Span::styled(
-                "--- Header ---",
-                Style::default().fg(Color::LightCyan),
-            )]));
+            let recipient_info = if item.receiver.is_empty() {
+                Span::raw("")
+            } else {
+                Span::raw(format!(" -> {}", item.receiver))
+            };
+            let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
+                Span::raw(format!("->{}", item.reply_serial))
+            } else {
+                Span::raw("")
+            };
+            
             header_lines.push(Line::from(vec![
-                Span::styled("Stream: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    format!("{:?}", app.stream),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-            header_lines.push(Line::from(vec![
-                Span::styled("Sender: ", Style::default().fg(Color::Gray)),
                 Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
-            ]));
-            if !item.receiver.is_empty() {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Receiver: ", Style::default().fg(Color::Gray)),
-                    Span::styled(item.receiver.clone(), Style::default().fg(Color::Red)),
-                ]));
-            }
-            header_lines.push(Line::from(vec![
-                Span::styled("Path: ", Style::default().fg(Color::Gray)),
+                recipient_info,
+                Span::raw("|"),
+                Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
+                reply_serial_info,
+                Span::raw("|"),
+                Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+                Span::raw(":"),
                 Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
             ]));
-            header_lines.push(Line::from(vec![
-                Span::styled("Member: ", Style::default().fg(Color::Gray)),
-                Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
-            ]));
-            header_lines.push(Line::from(vec![
-                Span::styled("Is Reply: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    if item.is_reply { "Yes" } else { "No" },
-                    Style::default().fg(if item.is_reply {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    }),
-                ),
-            ]));
-            if !item.reply_serial.is_empty() {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Reply Serial: ", Style::default().fg(Color::Gray)),
-                    Span::styled(
-                        item.reply_serial.clone(),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ]));
-            }
-            if !item.serial.is_empty() {
-                header_lines.push(Line::from(vec![
-                    Span::styled("Serial: ", Style::default().fg(Color::Gray)),
-                    Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
-                ]));
-            }
             header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
 
             let detail_text = if let Some(message) = &item.message {
