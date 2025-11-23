@@ -13,6 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 // UI widgets
 use bus::{BusType, Item};
 use std::{
@@ -55,6 +56,7 @@ enum Mode {
     Filtering,           // Mode for entering a filter string
     AutoFilterSelection, // Mode for selecting autofilter field
     ThreadView,          // Mode for viewing a specific message thread
+    GroupingSelection,   // Mode for selecting a grouping option
 }
 
 // Main application struct holding all the state
@@ -73,6 +75,7 @@ struct App<'a> {
     thread_serial: Option<String>,
     detail_scroll_request: Option<i32>,
     filter_criteria: HashMap<String, String>,
+    grouping_type: bus::GroupingType,
 }
 
 // Default implementation for the App struct
@@ -93,6 +96,7 @@ impl Default for App<'_> {
             thread_serial: None,
             detail_scroll_request: None,
             filter_criteria: HashMap::new(),
+            grouping_type: bus::GroupingType::default(),
         }
     }
 }
@@ -220,17 +224,45 @@ async fn run<'a>(
                 .collect();
 
             app.filtered_and_sorted_items
-                .sort_by(|a, b| a.sender.cmp(&b.sender).then(a.timestamp.cmp(&b.timestamp)));
+                .sort_by(|a, b| match app.grouping_type {
+                    bus::GroupingType::Sender => a
+                        .sender
+                        .cmp(&b.sender)
+                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
+                    bus::GroupingType::Member => a
+                        .member
+                        .cmp(&b.member)
+                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
+                    bus::GroupingType::Path => a
+                        .path
+                        .cmp(&b.path)
+                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
+                    bus::GroupingType::Serial => a
+                        .serial
+                        .cmp(&b.serial)
+                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
+                    bus::GroupingType::None => a.timestamp.cmp(&b.timestamp),
+                });
 
-            let mut last_sender: Option<String> = None;
+            let mut last_group_key: Option<String> = None;
             app.list_items = app
                 .filtered_and_sorted_items
                 .iter()
                 .map(|item| {
-                    let indent = if last_sender.as_ref() == Some(&item.sender) {
+                    let current_group_key = match app.grouping_type {
+                        bus::GroupingType::Sender => item.sender.clone(),
+                        bus::GroupingType::Member => item.member.clone(),
+                        bus::GroupingType::Path => item.path.clone(),
+                        bus::GroupingType::Serial => item.serial.clone(),
+                        bus::GroupingType::None => item.timestamp.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs().to_string(), // Use timestamp as a unique key for "None"
+                    };
+
+                    let indent = if last_group_key.as_ref() == Some(&current_group_key)
+                        && app.grouping_type != bus::GroupingType::None
+                    {
                         "  "
                     } else {
-                        last_sender = Some(item.sender.clone());
+                        last_group_key = Some(current_group_key);
                         ""
                     };
                     let dt: DateTime<Local> = item.timestamp.into();
@@ -296,7 +328,7 @@ async fn run<'a>(
                     ListItem::new(line)
                 })
                 .collect();
-            
+
             // BUGFIX: Ensure an item is selected by default if the list is not empty
             if app.list_state.selected().is_none() && !app.list_items.is_empty() {
                 app.list_state.select(Some(0));
@@ -351,6 +383,7 @@ async fn run<'a>(
                                     }
                                 }
                             }
+                            KeyCode::Char('g') => app.mode = Mode::GroupingSelection,
                             KeyCode::Char('f') => app.mode = Mode::Filtering,
                             KeyCode::Up => {
                                 if !app.list_items.is_empty() {
@@ -498,6 +531,36 @@ async fn run<'a>(
                         }
                     }
                 }
+                Mode::GroupingSelection => {
+                    if let Event::Key(key) = event {
+                        match key.code {
+                            KeyCode::Char('s') => {
+                                app.grouping_type = bus::GroupingType::Sender;
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Char('m') => {
+                                app.grouping_type = bus::GroupingType::Member;
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Char('p') => {
+                                app.grouping_type = bus::GroupingType::Path;
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Char('i') => {
+                                app.grouping_type = bus::GroupingType::Serial; // Changed from 'r' to 'i' to avoid conflict with reply
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Char('n') => {
+                                app.grouping_type = bus::GroupingType::None;
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Esc => {
+                                app.mode = Mode::Normal;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 Mode::AutoFilterSelection => {
                     if let Event::Key(key) = event {
                         if let Some(selected) = app.list_state.selected() {
@@ -563,7 +626,7 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
             } else {
                 Span::raw("")
             };
-            
+
             header_lines.push(Line::from(vec![
                 Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
                 recipient_info,

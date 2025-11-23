@@ -44,6 +44,21 @@ pub enum BusType {
     Both = 2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupingType {
+    Sender,
+    Member,
+    Path,
+    Serial,
+    None,
+}
+
+impl Default for GroupingType {
+    fn default() -> Self {
+        GroupingType::Sender
+    }
+}
+
 // creates a new dbus listener for the given but type. returns a lis
 pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
     let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));

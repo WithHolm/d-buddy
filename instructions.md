@@ -17,8 +17,9 @@ The application has been recently refactored to support multiple D-Bus streams (
 * please stop and wait after every step. dont just run through everything autonomously.
 * update this file when a task has been completed.
 * dont run git command, remind me to commit changes after each task completion.
-* NEVER RUN ANY GIT COMMANDS.
+* NEVER RUN ANY GIT COMMANDS. dont commit any changes
 * dont run cargo clippy 
+* always run cargo check and cargo fmt after code changes
 
 ---
 
@@ -62,12 +63,13 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] add is_reply to header in details view. this also needs to be shown in main view with a simple glyph 
    - example: [timetamp] [glyph if is_reply] ....rest of data like it is now
 - [x] fix header in details view: it should be at top besides "Message Details [...↓]" suggestion "Message details [data above or below thingy] {sender} -> {recipient}|{serial}->{reply_serial if is_reply}|{member}:{path}"
-   - [] details pane: this can be on the line below "details view".
-   - [] details pane: remove the --- Header --- and header info below it
+   - [x] details pane: this can be on the line below "details view".
+   - [x] details pane: remove the --- Header --- and header info below it
 - [x] currently you can scroll past the bottom of details view. make sure to disable scroll down or up if the bottom/top is reached.
 - [] add serial to listview between timestamp and sender, reply_serial if is_reply  
 - [] filtering should pop up as a text input field in the middle of screen. 
    - [] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter
-- [] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
+- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
 ### Grouping
-- [] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
+- [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
+ - [] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)

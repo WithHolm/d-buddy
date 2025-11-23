@@ -159,6 +159,8 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
                     ": view | ".into(),
                     "f".bold().cyan(),
                     ": filter | ".into(),
+                    "g".bold().cyan(),
+                    ": group | ".into(),
                     "a".bold().cyan(),
                     ": autofilter | ".into(),
                     "r".bold().cyan(),
@@ -207,6 +209,30 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             ]))
             .block(Block::default().borders(Borders::ALL).title("Thread View"));
             frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::GroupingSelection => {
+            let area = centered_rect(50, 20, frame.area());
+            let block = Block::default()
+                .title("Select Grouping")
+                .borders(Borders::ALL);
+            frame.render_widget(Clear, area);
+            frame.render_widget(&block, area);
+
+            let inner_area = block.inner(area);
+
+            let options = vec![
+                Line::from(vec!["s".bold().cyan(), ": Sender".into()]),
+                Line::from(vec!["m".bold().cyan(), ": Member".into()]),
+                Line::from(vec!["p".bold().cyan(), ": Path".into()]),
+                Line::from(vec!["i".bold().cyan(), ": Serial".into()]),
+                Line::from(vec!["n".bold().cyan(), ": None".into()]),
+                Line::from(vec!["Esc".bold().cyan(), ": Cancel".into()]),
+            ];
+            let list = List::new(options)
+                .block(Block::default())
+                .highlight_style(Style::default().bg(Color::DarkGray));
+
+            frame.render_widget(list, inner_area);
         }
     }
 }
