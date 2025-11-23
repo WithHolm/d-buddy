@@ -51,8 +51,10 @@ impl Default for Config {
 
 // Enum to define the current operating mode of the application
 enum Mode {
-    Normal,    // Default mode for browsing D-Bus messages
-    Filtering, // Mode for entering a filter string
+    Normal,              // Default mode for browsing D-Bus messages
+    Filtering,           // Mode for entering a filter string
+    AutoFilterSelection, // Mode for selecting autofilter field
+    ThreadView,          // Mode for viewing a specific message thread
 }
 
 // Main application struct holding all the state
@@ -68,6 +70,9 @@ struct App<'a> {
     detail_text: Text<'static>, // The formatted string for the currently viewed detail
     detail_scroll: u16,    // The vertical scroll offset for the detail view
     status_message: String, // A temporary message to show in the status bar
+    thread_serial: Option<String>,
+    detail_scroll_request: Option<i32>,
+    filter_criteria: HashMap<String, String>,
 }
 
 // Default implementation for the App struct
@@ -85,6 +90,9 @@ impl Default for App<'_> {
             detail_text: Text::default(),     // No detail text initially
             detail_scroll: 0,                 // Start with no scroll
             status_message: String::new(),    // No status message initially
+            thread_serial: None,
+            detail_scroll_request: None,
+            filter_criteria: HashMap::new(),
         }
     }
 }
@@ -150,15 +158,63 @@ async fn run<'a>(
     loop {
         // Create a scope to ensure the lock is released before drawing
         {
-            let messages = app.messages.get(&app.stream).unwrap().lock().await;
+            let all_messages = match app.stream {
+                BusType::Session | BusType::System => {
+                    app.messages.get(&app.stream).unwrap().lock().await.clone()
+                }
+                BusType::Both => {
+                    let mut combined_messages: Vec<Item> = Vec::new();
+                    if let Some(session_arc) = app.messages.get(&BusType::Session) {
+                        combined_messages.extend(session_arc.lock().await.iter().cloned());
+                    }
+                    if let Some(system_arc) = app.messages.get(&BusType::System) {
+                        combined_messages.extend(system_arc.lock().await.iter().cloned());
+                    }
+                    combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                    combined_messages
+                }
+            };
             let filter_text = app.input.value();
 
-            app.filtered_and_sorted_items = messages
+            app.filtered_and_sorted_items = all_messages
                 .iter()
-                .filter(|item| {
-                    item.sender.contains(filter_text)
-                        || item.member.contains(filter_text)
-                        || item.path.contains(filter_text)
+                .filter(|item| match app.mode {
+                    Mode::ThreadView => {
+                        if let Some(thread_serial) = &app.thread_serial {
+                            item.serial == *thread_serial || item.reply_serial == *thread_serial
+                        } else {
+                            false
+                        }
+                    }
+                    _ => {
+                        let mut passes_field_filters = true;
+                        if !app.filter_criteria.is_empty() {
+                            for (field, value) in &app.filter_criteria {
+                                let item_field_value = match field.as_str() {
+                                    "sender" => &item.sender,
+                                    "member" => &item.member,
+                                    "path" => &item.path,
+                                    "serial" => &item.serial,
+                                    "reply_serial" => &item.reply_serial,
+                                    _ => {
+                                        passes_field_filters = false;
+                                        break;
+                                    }
+                                };
+                                if !item_field_value.contains(value) {
+                                    passes_field_filters = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        let passes_general_filter = filter_text.is_empty()
+                            || item.sender.contains(filter_text)
+                            || item.member.contains(filter_text)
+                            || item.path.contains(filter_text);
+
+                        passes_field_filters && passes_general_filter
+                    }
                 })
                 .cloned()
                 .collect();
@@ -182,13 +238,47 @@ async fn run<'a>(
                     let line = Line::from(vec![
                         Span::raw(indent),
                         Span::raw("["),
-                        Span::styled(timestamp, Style::default().fg(Color::Yellow)),
-                        Span::raw("] sender: "),
-                        Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
+                        Span::styled(
+                            timestamp,
+                            if app.show_details {
+                                Style::default().fg(Color::White)
+                            } else {
+                                Style::default().fg(Color::Yellow)
+                            },
+                        ),
+                        Span::raw("]"),
+                        if item.is_reply {
+                            Span::raw(" ↩ ")
+                        } else {
+                            Span::raw(" ")
+                        },
+                        Span::raw("sender: "),
+                        Span::styled(
+                            item.sender.clone(),
+                            if app.show_details {
+                                Style::default().fg(Color::White)
+                            } else {
+                                Style::default().fg(Color::Green)
+                            },
+                        ),
                         Span::raw(", member: "),
-                        Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+                        Span::styled(
+                            item.member.clone(),
+                            if app.show_details {
+                                Style::default().fg(Color::White)
+                            } else {
+                                Style::default().fg(Color::Blue)
+                            },
+                        ),
                         Span::raw(", path: "),
-                        Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
+                        Span::styled(
+                            item.path.clone(),
+                            if app.show_details {
+                                Style::default().fg(Color::White)
+                            } else {
+                                Style::default().fg(Color::Magenta)
+                            },
+                        ),
                     ]);
                     ListItem::new(line)
                 })
@@ -217,8 +307,8 @@ async fn run<'a>(
                             KeyCode::Tab => {
                                 app.stream = match app.stream {
                                     BusType::Session => BusType::System,
-                                    BusType::System => BusType::Session,
-                                    BusType::Both => BusType::Session, // Default cycle
+                                    BusType::System => BusType::Both,
+                                    BusType::Both => BusType::Session,
                                 };
                                 app.list_state.select(None); // Reset selection
                             }
@@ -230,15 +320,20 @@ async fn run<'a>(
                                 }
                             }
                             KeyCode::Char('a') => {
+                                if app.list_state.selected().is_some() {
+                                    app.mode = Mode::AutoFilterSelection;
+                                }
+                            }
+                            KeyCode::Char('t') => {
                                 if let Some(selected) = app.list_state.selected() {
                                     if let Some(item) = app.filtered_and_sorted_items.get(selected)
                                     {
-                                        app.input = Input::from(item.sender.as_str());
-                                        app.mode = Mode::Filtering;
+                                        app.thread_serial = Some(item.serial.clone());
+                                        app.mode = Mode::ThreadView;
                                     }
                                 }
                             }
-                            KeyCode::Char('/') => app.mode = Mode::Filtering,
+                            KeyCode::Char('f') => app.mode = Mode::Filtering,
                             KeyCode::Up => {
                                 if !app.list_items.is_empty() {
                                     let i = match app.list_state.selected() {
@@ -325,22 +420,22 @@ async fn run<'a>(
                             }
                             KeyCode::Char('j') => {
                                 if app.show_details {
-                                    app.detail_scroll = app.detail_scroll.saturating_add(1);
+                                    app.detail_scroll_request = Some(1);
                                 }
                             }
                             KeyCode::Char('k') => {
                                 if app.show_details {
-                                    app.detail_scroll = app.detail_scroll.saturating_sub(1);
+                                    app.detail_scroll_request = Some(-1);
                                 }
                             }
                             KeyCode::PageDown => {
                                 if app.show_details {
-                                    app.detail_scroll = app.detail_scroll.saturating_add(10);
+                                    app.detail_scroll_request = Some(10);
                                 }
                             }
                             KeyCode::PageUp => {
                                 if app.show_details {
-                                    app.detail_scroll = app.detail_scroll.saturating_sub(10);
+                                    app.detail_scroll_request = Some(-10);
                                 }
                             }
                             _ => {}
@@ -351,16 +446,80 @@ async fn run<'a>(
                     if let Event::Key(key) = event {
                         match key.code {
                             KeyCode::Enter => {
+                                let input_value = app.input.value().to_string();
+                                if input_value.is_empty() {
+                                    // Clear all field filters and general text filter
+                                    app.filter_criteria.clear();
+                                    app.input.reset();
+                                } else if let Some((field, value)) = input_value.split_once('=') {
+                                    if value.is_empty() {
+                                        // Clear a specific field filter
+                                        app.filter_criteria.remove(field);
+                                    } else {
+                                        // Set a specific field filter
+                                        app.filter_criteria
+                                            .insert(field.to_string(), value.to_string());
+                                    }
+                                    app.input.reset(); // Clear input box after applying field filter
+                                } else {
+                                    // Treat as general text filter, clear field filters
+                                    app.filter_criteria.clear();
+                                    // app.input is already set with the general text, no reset here
+                                }
                                 app.mode = Mode::Normal;
                             }
                             KeyCode::Esc => {
                                 app.input.reset();
+                                app.filter_criteria.clear(); // Clear all field filters
                                 app.mode = Mode::Normal;
                             }
                             _ => {
                                 input_backend::to_input_request(&event)
                                     .and_then(|req| app.input.handle(req));
                             }
+                        }
+                    }
+                }
+                Mode::AutoFilterSelection => {
+                    if let Event::Key(key) = event {
+                        if let Some(selected) = app.list_state.selected() {
+                            if let Some(item) = app.filtered_and_sorted_items.get(selected) {
+                                match key.code {
+                                    KeyCode::Char('s') => {
+                                        app.input = Input::from(item.sender.as_str());
+                                        app.mode = Mode::Filtering;
+                                    }
+                                    KeyCode::Char('m') => {
+                                        app.input = Input::from(item.member.as_str());
+                                        app.mode = Mode::Filtering;
+                                    }
+                                    KeyCode::Char('p') => {
+                                        app.input = Input::from(item.path.as_str());
+                                        app.mode = Mode::Filtering;
+                                    }
+                                    KeyCode::Char('r') => {
+                                        app.input = Input::from(item.serial.as_str());
+                                        app.mode = Mode::Filtering;
+                                    }
+                                    KeyCode::Esc => {
+                                        app.mode = Mode::Normal;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    } else {
+                        app.mode = Mode::Normal; // No item selected, go back to normal
+                    }
+                }
+                Mode::ThreadView => {
+                    if let Event::Key(key) = event {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.thread_serial = None;
+                                app.mode = Mode::Normal;
+                            }
+                            _ => {} // Ignore other keys for now
                         }
                     }
                 }
@@ -405,17 +564,27 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
                 Span::styled("Member: ", Style::default().fg(Color::Gray)),
                 Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
             ]));
-            if item.is_reply {
+            header_lines.push(Line::from(vec![
+                Span::styled("Is Reply: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    if item.is_reply { "Yes" } else { "No" },
+                    Style::default().fg(if item.is_reply {
+                        Color::Green
+                    } else {
+                        Color::Red
+                    }),
+                ),
+            ]));
+            if !item.reply_serial.is_empty() {
                 header_lines.push(Line::from(vec![
-                    Span::styled("Is Reply: ", Style::default().fg(Color::Gray)),
-                    Span::styled("Yes (Serial: ", Style::default().fg(Color::Yellow)),
+                    Span::styled("Reply Serial: ", Style::default().fg(Color::Gray)),
                     Span::styled(
                         item.reply_serial.clone(),
                         Style::default().fg(Color::Yellow),
                     ),
-                    Span::styled(")", Style::default().fg(Color::Yellow)),
                 ]));
-            } else if !item.serial.is_empty() {
+            }
+            if !item.serial.is_empty() {
                 header_lines.push(Line::from(vec![
                     Span::styled("Serial: ", Style::default().fg(Color::Gray)),
                     Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),

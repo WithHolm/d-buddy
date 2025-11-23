@@ -24,19 +24,22 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     let items = app.list_items.clone();
 
     // Create the List widget for displaying D-Bus messages
-    let (session_style, system_style) = match app.stream {
+    let (session_style, system_style, both_style) = match app.stream {
         BusType::Session => (
             Style::default().fg(Color::LightCyan).bold(),
+            Style::default().fg(Color::White).italic(),
             Style::default().fg(Color::White).italic(),
         ),
         BusType::System => (
             Style::default().fg(Color::White).italic(),
             Style::default().fg(Color::LightCyan).bold(),
+            Style::default().fg(Color::White).italic(),
         ),
-        _ => (
-            Style::default().fg(Color::White),
-            Style::default().fg(Color::White),
-        ), // Fallback for BusType::Both
+        BusType::Both => (
+            Style::default().fg(Color::White).italic(),
+            Style::default().fg(Color::White).italic(),
+            Style::default().fg(Color::LightCyan).bold(),
+        ),
     };
 
     let title_spans = Line::from(vec![
@@ -44,6 +47,8 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         Span::styled("Session", session_style),
         Span::raw("|"),
         Span::styled("System", system_style),
+        Span::raw("|"),
+        Span::styled("Both", both_style),
         Span::raw("]"),
     ]);
 
@@ -53,7 +58,11 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
                 .title(title_spans) // Set title for the block
                 .borders(Borders::ALL),
         )
-        .highlight_symbol("> "); // Symbol to indicate selected item
+        .highlight_symbol(if app.list_state.selected().is_some() {
+            "> "
+        } else {
+            ""
+        }); // Symbol to indicate selected item
 
     // Render the message list widget
     frame.render_stateful_widget(list, main_chunks[0], &mut app.list_state);
@@ -63,19 +72,67 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         let area = centered_rect(80, 80, frame.area());
         let popup_inner_height = area.height.saturating_sub(2);
 
-        // Check if scrolling is possible
         let num_text_lines = app.detail_text.lines.len() as u16;
+        let max_scroll = num_text_lines.saturating_sub(popup_inner_height);
+
+        if let Some(delta) = app.detail_scroll_request.take() {
+            app.detail_scroll = (app.detail_scroll as i32 + delta).max(0) as u16;
+        }
+        app.detail_scroll = app.detail_scroll.min(max_scroll);
+
+        // Check if scrolling is possible
         let can_scroll_up = app.detail_scroll > 0;
         let can_scroll_down = app.detail_scroll + popup_inner_height < num_text_lines;
-
         // Create a dynamic title with scroll indicators
-        let title = match (can_scroll_up, can_scroll_down) {
-            (true, true) => "Message Details [↑...↓]",
-            (true, false) => "Message Details [↑...]",
-            (false, true) => "Message Details [...↓]",
-            (false, false) => "Message Details",
+        let scroll_indicator = match (can_scroll_up, can_scroll_down) {
+            (true, true) => "[↑...↓]",
+            (true, false) => "[↑...]",
+            (false, true) => "[...↓]",
+            (false, false) => "",
         };
-        let block = Block::default().title(title).borders(Borders::ALL);
+
+        let title_spans = if let Some(selected_index) = app.list_state.selected() {
+            if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
+                let recipient_info = if item.receiver.is_empty() {
+                    Span::raw("")
+                } else {
+                    Span::raw(format!(" -> {}", item.receiver))
+                };
+                let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
+                    Span::raw(format!("->{}", item.reply_serial))
+                } else {
+                    Span::raw("")
+                };
+
+                Line::from(vec![
+                    Span::raw("Message Details "),
+                    Span::raw(scroll_indicator),
+                    Span::raw(" "),
+                    Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
+                    recipient_info,
+                    Span::raw("|"),
+                    Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
+                    reply_serial_info,
+                    Span::raw("|"),
+                    Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+                    Span::raw(":"),
+                    Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
+                ])
+            } else {
+                // Fallback if item is not found (shouldn't happen if selected_index is valid)
+                Line::from(format!(
+                    "Message Details {} (Error: Item not found)",
+                    scroll_indicator
+                ))
+            }
+        } else {
+            // Fallback if no item is selected
+            Line::from(format!(
+                "Message Details {} (No item selected)",
+                scroll_indicator
+            ))
+        };
+        let block = Block::default().title(title_spans).borders(Borders::ALL);
 
         // Create a Paragraph widget with the pre-formatted detail text and scroll state
         let paragraph = Paragraph::new(app.detail_text.clone())
@@ -93,8 +150,20 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             // Calculate width for the input box and scrolling
             let width = chunks[1].width.max(3) - 3;
             let scroll = app.input.visual_scroll(width as usize);
+
+            let mut filter_display_text = String::new();
+            if !app.filter_criteria.is_empty() {
+                let criteria_vec: Vec<String> = app
+                    .filter_criteria
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                filter_display_text.push_str(&format!("[{}] ", criteria_vec.join(", ")));
+            }
+            filter_display_text.push_str(app.input.value());
+
             // Create a Paragraph widget for the input text
-            let input = Paragraph::new(app.input.value())
+            let input = Paragraph::new(filter_display_text)
                 .scroll((0, scroll as u16)) // Handle scrolling of input text
                 .block(Block::default().borders(Borders::ALL).title("Filter")); // Add border and title
             frame.render_widget(input, chunks[1]); // Render the input box in the bottom chunk
@@ -125,7 +194,7 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
                     ": quit | ".into(),
                     "Tab".bold().cyan(),
                     ": view | ".into(),
-                    "/".bold().cyan(),
+                    "f".bold().cyan(),
                     ": filter | ".into(),
                     "a".bold().cyan(),
                     ": autofilter | ".into(),
@@ -145,6 +214,35 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             };
             let help_paragraph = Paragraph::new(help_text)
                 .block(Block::default().borders(Borders::ALL).title("Keys"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::AutoFilterSelection => {
+            let help_paragraph = Paragraph::new(Line::from(vec![
+                Span::raw("Autofilter by: "),
+                "s".bold().cyan(),
+                ": sender | ".into(),
+                "m".bold().cyan(),
+                ": member | ".into(),
+                "p".bold().cyan(),
+                ": path | ".into(),
+                "r".bold().cyan(),
+                ": serial | ".into(),
+                "esc".bold().cyan(),
+                ": cancel".into(),
+            ]))
+            .block(Block::default().borders(Borders::ALL).title("Autofilter"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::ThreadView => {
+            let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
+            let help_paragraph = Paragraph::new(Line::from(vec![
+                Span::raw("Thread View (Serial: "),
+                Span::styled(thread_serial_display, Style::default().fg(Color::LightBlue)),
+                Span::raw(") | "),
+                "Esc".bold().cyan(),
+                ": exit thread view".into(),
+            ]))
+            .block(Block::default().borders(Borders::ALL).title("Thread View"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
     }

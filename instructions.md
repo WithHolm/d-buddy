@@ -13,8 +13,9 @@ The application has been recently refactored to support multiple D-Bus streams (
 - **Data Model**: The central `App` struct now holds a `HashMap` where keys are the `BusType` (Session/System) and values are `Arc<tokio::sync::Mutex<Vec<bus::Item>>>`. This allows each bus listener to independently and safely update its own list of messages.
 
 ## AI
-* AI before it can change code, create a new file at root called current, with what it needs to do. you can afterwards replace all content inside this file every time you want to update the codebase.
+* AI before it can change code, create a new file at root called current, with what it needs to do and recomended steps (your plan). you can afterwards replace all content inside this file every time you want to update the codebase.
 * please stop and wait after every step. dont just run through everything autonomously.
+* update this file when a task has been completed.
 
 ---
 
@@ -30,7 +31,7 @@ This plan outlines the next steps to integrate the new architecture and build ou
 ### 2. Multi-Bus View & Navigation
 - [x] **Implement Bus Switching**: Add a keybinding (e.g., `Tab`) to cycle the `app.stream` state between `Session` and `System` views.
 - [x] **Update UI Title**: The UI should clearly indicate which bus (`Session` or `System`) is currently being displayed.
-- [ ] **(Optional) Combined View**: Consider a `Both` view that merges messages from all streams, sorted chronologically.
+- [x] (Optional) Combined View: Consider a `Both` view that merges messages from all streams, sorted chronologically.
 
 ### 3. UI/UX Enhancements
 - [x] **Add Colors**: Use colors to differentiate elements like the sender, member, and path in the message list for better readability.
@@ -44,17 +45,18 @@ This plan outlines the next steps to integrate the new architecture and build ou
 ### 5. Code Health & Suggestions
 - [x] **Consolidate `BusType`**: Merge the duplicate `BusType` enums from `main.rs` and `bus.rs` into a single definition in `bus.rs`.
 - [x] **Add `Clear` command**: Implement a keybinding to clear the message list for the current view.
-- [ ] **Advanced Filtering**: Extend the filtering capabilities beyond a simple text search to allow filtering by specific fields (e.g., `member=NameAcquired`, `path=/org/freedesktop/DBus`).
+- [x] **Advanced Filtering**: Extend the filtering capabilities beyond a simple text search to allow filtering by specific fields (e.g., `member=NameAcquired`, `path=/org/freedesktop/DBus`).
 - [x] **Add `--check` mode**: Add a command line flag to run the app without the TUI for testing.
 
 
 ### 6. UI/UX Enhancements
-- [] Main window can switch between `Session` and `System` buses, but it only shows the active one: please implement a visual indication that there is more. thinking [*session*|**system**] to indicate system is active.
-- [] the > field is only shown after you have pressed up or down to select messages
-- [] change filtering key from / to f
-- [] enhance the autofiler selection, where you can select sender, member, path, serial
-- [] ability to drill down and get the whole "thread" if 2 applications talk to eachother. each item has serial and reply serial. need to filter so every message and reply is shown.. this "drill down" need to be available from both main ui and details view.
-- [] remove color from main view if details pane is open
-- [] add is_reply to header in details view. this also needs to be shown in main view with a simple glyph 
+- [x] Main window can switch between `Session` and `System` buses, but it only shows the active one: please implement a visual indication that there is more. thinking [*session*|**system**] to indicate system is active.
+- [x] the > field is only shown after you have pressed up or down to select messages
+- [x] change filtering key from / to f
+- [x] enhance the autofiler selection, where you can select sender, member, path, serial
+- [x] ability to drill down and get the whole "thread" if 2 applications talk to eachother. each item has serial and reply serial. need to filter so every message and reply is shown.. this "drill down" need to be available from both main ui and details view.
+- [x] remove color from main view if details pane is open
+- [x] add is_reply to header in details view. this also needs to be shown in main view with a simple glyph 
    - example: [timetamp] [glyph if is_reply] ....rest of data like it is now
-- [] fix header in details view: it should be at top besides "Message Details [...↓]" suggestion "Message details [data above or below thingy] {sender} -> {recipient}|{serial}->{reply_serial if is_reply}|{member}:{path}"
+- [x] fix header in details view: it should be at top besides "Message Details [...↓]" suggestion "Message details [data above or below thingy] {sender} -> {recipient}|{serial}->{reply_serial if is_reply}|{member}:{path}"
+- [x] currently you can scroll past the bottom of details view. make sure to disable scroll down or up if the bottom/top is reached.
