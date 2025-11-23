@@ -34,17 +34,17 @@ struct Args {
 }
 
 pub struct Config {
-    pub detail_level_colors: Vec<Color>,
+    pub color_dict: Color,
+    pub color_struct: Color,
+    pub color_default_stripe: Color,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            detail_level_colors: vec![
-                Color::DarkGray,
-                Color::Rgb(20, 20, 40), // Dark Blue
-                Color::Rgb(40, 20, 40), // Dark Magenta
-            ],
+            color_dict: Color::Rgb(20, 20, 40), // Dark Blue
+            color_struct: Color::Rgb(40, 20, 40), // Dark Magenta
+            color_default_stripe: Color::DarkGray,
         }
     }
 }
@@ -65,7 +65,7 @@ struct App<'a> {
     show_details: bool,    // Flag to indicate if message details popup should be shown
     mode: Mode,            // Current operating mode (Normal or Filtering)
     input: Input,          // Input buffer for the filtering text
-    detail_text: String,   // The formatted string for the currently viewed detail
+    detail_text: Text<'static>, // The formatted string for the currently viewed detail
     detail_scroll: u16,    // The vertical scroll offset for the detail view
     status_message: String, // A temporary message to show in the status bar
 }
@@ -82,7 +82,7 @@ impl Default for App<'_> {
             show_details: false,              // Details popup is hidden by default
             mode: Mode::Normal,               // Start in Normal mode
             input: Input::default(),          // Empty input buffer
-            detail_text: String::new(),       // No detail text initially
+            detail_text: Text::default(),     // No detail text initially
             detail_scroll: 0,                 // Start with no scroll
             status_message: String::new(),    // No status message initially
         }
@@ -248,7 +248,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app, config);
+                                        update_detail_text(app);
                                     }
                                 }
                             }
@@ -260,7 +260,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app, config);
+                                        update_detail_text(app);
                                     }
                                 }
                             }
@@ -268,7 +268,7 @@ async fn run<'a>(
                                 if app.show_details {
                                     app.show_details = false;
                                 } else {
-                                    update_detail_text(app, config);
+                                    update_detail_text(app);
                                     app.show_details = true;
                                 }
                             }
@@ -371,7 +371,7 @@ async fn run<'a>(
 }
 
 /// A helper function to generate the detail text for the currently selected message.
-fn update_detail_text(app: &mut App<'_>, config: &Config) {
+fn update_detail_text(app: &mut App<'_>) {
     if let Some(selected) = app.list_state.selected() {
         if let Some(item) = app.filtered_and_sorted_items.get(selected) {
             if let Some(message) = &item.message {
@@ -382,9 +382,9 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
                     "[No message body]".to_string()
                 } else {
                     match body.deserialize::<Structure>() {
-                        Ok(structure) => ui::format_value(&Value::from(structure), config),
+                        Ok(structure) => ui::format_value(&Value::from(structure)),
                         Err(_) => match body.deserialize::<Value>() {
-                            Ok(value) => ui::format_value(&value, config),
+                            Ok(value) => ui::format_value(&value),
                             Err(e) => format!(
                                 "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
                                 body_sig, e

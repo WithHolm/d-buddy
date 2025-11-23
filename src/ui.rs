@@ -1,4 +1,4 @@
-use super::{App, Mode};
+use super::{App, Config, Mode};
 use ratatui::{
     prelude::*,
     text::Line,
@@ -7,7 +7,7 @@ use ratatui::{
 use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
+pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
     // Define the main layout with two chunks: one for the message list, one for the input/status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -54,19 +54,24 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         };
         let block = Block::default().title(title).borders(Borders::ALL);
 
-        let mut item_index = 0;
+        let mut top_level_item_index = 0;
         let text_lines: Vec<Line> = app
             .detail_text
             .lines()
             .map(|line| {
                 if !line.starts_with(' ') {
-                    item_index += 1;
+                    top_level_item_index += 1;
                 }
-                let style = if item_index % 2 == 0 {
-                    Style::default()
+                let indent_level = line.chars().take_while(|&c| c == ' ').count() / 2;
+                let color_level =
+                    (top_level_item_index + indent_level) % (config.detail_level_colors.len() + 1);
+
+                let style = if color_level < config.detail_level_colors.len() {
+                    Style::default().bg(config.detail_level_colors[color_level])
                 } else {
-                    Style::default().bg(Color::DarkGray)
+                    Style::default()
                 };
+
                 Line::styled(line, style)
             })
             .collect();
