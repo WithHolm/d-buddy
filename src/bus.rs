@@ -16,6 +16,7 @@ pub struct Item {
     pub serial: String,
     pub reply_serial: String,
     pub is_reply: bool,
+    pub stream_type: BusType,
 }
 
 impl Default for Item {
@@ -30,6 +31,7 @@ impl Default for Item {
             serial: String::new(),
             reply_serial: String::new(),
             is_reply: false,
+            stream_type: BusType::Session, // Default value
         }
     }
 }
@@ -100,6 +102,7 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
                     .unwrap_or_default(),
                 serial: header.primary().serial_num().to_string(),
                 message: Some(msg),
+                stream_type: t, // Set the stream_type here
             };
 
             //push to messages_clone

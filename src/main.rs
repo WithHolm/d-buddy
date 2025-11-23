@@ -247,6 +247,19 @@ async fn run<'a>(
                             },
                         ),
                         Span::raw("]"),
+                        if app.stream == BusType::Both {
+                            match item.stream_type {
+                                BusType::Session => {
+                                    Span::styled("[sess]", Style::default().fg(Color::Cyan))
+                                }
+                                BusType::System => {
+                                    Span::styled("[syst]", Style::default().fg(Color::LightMagenta))
+                                }
+                                _ => Span::raw(""), // Should not happen in this context
+                            }
+                        } else {
+                            Span::raw("")
+                        },
                         if item.is_reply {
                             Span::raw(" ↩ ")
                         } else {
