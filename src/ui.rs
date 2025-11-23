@@ -1,13 +1,13 @@
 use super::{App, Config, Mode};
 use ratatui::{
     prelude::*,
-    text::Line,
+    text::{Line, Text},
     widgets::{Block, Borders, Clear, List, Paragraph, Wrap},
 };
 use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
+pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     // Define the main layout with two chunks: one for the message list, one for the input/status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -41,7 +41,7 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
         let popup_inner_height = area.height.saturating_sub(2);
 
         // Check if scrolling is possible
-        let num_text_lines = app.detail_text.lines().count() as u16;
+        let num_text_lines = app.detail_text.lines.len() as u16;
         let can_scroll_up = app.detail_scroll > 0;
         let can_scroll_down = app.detail_scroll + popup_inner_height < num_text_lines;
 
@@ -54,30 +54,8 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
         };
         let block = Block::default().title(title).borders(Borders::ALL);
 
-        let mut top_level_item_index = 0;
-        let text_lines: Vec<Line> = app
-            .detail_text
-            .lines()
-            .map(|line| {
-                if !line.starts_with(' ') {
-                    top_level_item_index += 1;
-                }
-                let indent_level = line.chars().take_while(|&c| c == ' ').count() / 2;
-                let color_level =
-                    (top_level_item_index + indent_level) % (config.detail_level_colors.len() + 1);
-
-                let style = if color_level < config.detail_level_colors.len() {
-                    Style::default().bg(config.detail_level_colors[color_level])
-                } else {
-                    Style::default()
-                };
-
-                Line::styled(line, style)
-            })
-            .collect();
-
         // Create a Paragraph widget with the pre-formatted detail text and scroll state
-        let paragraph = Paragraph::new(text_lines)
+        let paragraph = Paragraph::new(app.detail_text.clone())
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((app.detail_scroll, 0));
@@ -150,12 +128,18 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
 }
 
 // Helper function to format a `zbus::zvariant::Value` in a YAML-like, readable way.
-pub fn format_value(value: &Value) -> String {
+pub fn format_value(value: &Value, config: &Config) -> Text<'static> {
     // Inner recursive function to handle nesting and indentation.
-    fn format_recursive(value: &Value, indent: usize, prefix: &str) -> String {
+    fn format_recursive(
+        value: &Value,
+        indent: usize,
+        prefix: &str,
+        parent_alternating_index: usize,
+        config: &Config,
+    ) -> Vec<Line<'static>> {
         // Handle variants by unwrapping them and formatting the inner value directly.
         if let Value::Value(inner) = value {
-            return format_recursive(inner, indent, prefix);
+            return format_recursive(inner, indent, prefix, parent_alternating_index, config);
         }
 
         let indent_str = "  ".repeat(indent);
@@ -183,247 +167,386 @@ pub fn format_value(value: &Value) -> String {
             }
         }
 
+        let mut lines = Vec::new();
+        let base_style = if parent_alternating_index % 2 == 0 {
+            Style::default()
+        } else {
+            Style::default().bg(config.color_default_stripe)
+        };
+
+        // Determine the style for the current line
+        let current_item_style = match value {
+            Value::Dict(_) => base_style.bg(config.color_dict),
+            Value::Structure(_) => base_style.bg(config.color_struct),
+            _ => base_style,
+        };
+
         // Handle simple, single-line values first.
         match value {
-            Value::U8(v) => return format!("{}{} [u8]: {}", indent_str, prefix, v),
-            Value::I16(v) => return format!("{}{} [i16]: {}", indent_str, prefix, v),
-            Value::U16(v) => return format!("{}{} [u16]: {}", indent_str, prefix, v),
-            Value::I32(v) => return format!("{}{} [i32]: {}", indent_str, prefix, v),
-            Value::U32(v) => return format!("{}{} [u32]: {}", indent_str, prefix, v),
-            Value::I64(v) => return format!("{}{} [i64]: {}", indent_str, prefix, v),
-            Value::U64(v) => return format!("{}{} [u64]: {}", indent_str, prefix, v),
-            Value::F64(v) => return format!("{}{} [f64]: {}", indent_str, prefix, v),
-            Value::Bool(v) => return format!("{}{} [bool]: {}", indent_str, prefix, v),
-            Value::Str(s) => return format!("{}{} [str]: \"{}\"", indent_str, prefix, s),
-            Value::Signature(s) => return format!("{}{} [signature]: '{}'", indent_str, prefix, s),
-            Value::ObjectPath(p) => {
-                return format!("{}{} [object-path]: {}", indent_str, prefix, p.as_str())
-            }
-            Value::Fd(f) => return format!("{}{} [fd]: {:?}", indent_str, prefix, f),
+            Value::U8(v) => lines.push(Line::styled(
+                format!("{}{} [u8]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::I16(v) => lines.push(Line::styled(
+                format!("{}{} [i16]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::U16(v) => lines.push(Line::styled(
+                format!("{}{} [u16]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::I32(v) => lines.push(Line::styled(
+                format!("{}{} [i32]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::U32(v) => lines.push(Line::styled(
+                format!("{}{} [u32]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::I64(v) => lines.push(Line::styled(
+                format!("{}{} [i64]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::U64(v) => lines.push(Line::styled(
+                format!("{}{} [u64]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::F64(v) => lines.push(Line::styled(
+                format!("{}{} [f64]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::Bool(v) => lines.push(Line::styled(
+                format!("{}{} [bool]: {}", indent_str, prefix, v),
+                current_item_style,
+            )),
+            Value::Str(s) => lines.push(Line::styled(
+                format!("{}{} [str]: \"{}\"", indent_str, prefix, s),
+                current_item_style,
+            )),
+            Value::Signature(s) => lines.push(Line::styled(
+                format!("{}{} [signature]: '{}'", indent_str, prefix, s),
+                current_item_style,
+            )),
+            Value::ObjectPath(p) => lines.push(Line::styled(
+                format!("{}{} [object-path]: {}", indent_str, prefix, p.as_str()),
+                current_item_style,
+            )),
+            Value::Fd(f) => lines.push(Line::styled(
+                format!("{}{} [fd]: {:?}", indent_str, prefix, f),
+                current_item_style,
+            )),
             // This case is now reachable for `Value::Value`
-            _ => (), // Continue to complex types
-        }
-
-        // Handle complex, multi-line values.
-        let mut output = format!(
-            "{}{} [{}]:\n",
-            indent_str,
-            prefix,
-            get_value_type_str(value)
-        );
-
-        match value {
-            Value::Array(arr) => {
-                if arr.is_empty() {
-                    return format!("{}{} [array]: []", indent_str, prefix);
-                }
-
-                // Special Case 1: Array of `(String, Value)` structs, to be displayed like a dict.
-                let is_kv_struct_array = arr.iter().all(|item| {
-                    if let Value::Structure(s) = item {
-                        if s.fields().len() == 2 {
-                            if let Value::Str(_) = &s.fields()[0] {
-                                return true;
-                            }
-                        }
-                    }
-                    false
-                });
-
-                if is_kv_struct_array {
-                    let mut new_output = format!("{}{} [struct[]]:\n", indent_str, prefix);
-                    let key_indent_str = "  ".repeat(indent + 1);
-
-                    for item in arr.iter() {
-                        if let Value::Structure(s) = item {
-                            if let (Value::Str(key), value) = (&s.fields()[0], &s.fields()[1]) {
-                                // Print the key on its own indented line.
-                                new_output.push_str(&format!("{}{}:\n", key_indent_str, key));
-                                // Format the value on subsequent lines, further indented.
-                                let value_str = format_recursive(value, indent + 2, "");
-                                new_output.push_str(&value_str);
-                                new_output.push('\n');
-                            }
-                        }
-                    }
-                    return new_output.trim_end().to_string();
-                }
-
-                // Special Case 2: Homogeneous array of simple types.
-                let first_val = &arr[0];
-                let is_simple_type = !matches!(
-                    first_val,
-                    Value::Array(_) | Value::Structure(_) | Value::Dict(_) | Value::Value(_)
-                );
-
-                if is_simple_type {
-                    let first_type_str = get_value_type_str(first_val);
-                    let all_same_simple_type = arr
-                        .iter()
-                        .skip(1)
-                        .all(|v| get_value_type_str(v) == first_type_str);
-
-                    if all_same_simple_type {
-                        if first_type_str == "u8" {
-                            let bytes: Vec<u8> = arr
-                                .iter()
-                                .filter_map(|v| if let Value::U8(b) = v { Some(*b) } else { None })
-                                .collect();
-
-                            let mut new_output =
-                                format!("{}{} [ay (u8[])]:\n", indent_str, prefix);
-                            let item_indent_str = "  ".repeat(indent + 1);
-
-                            for (i, chunk) in bytes.chunks(16).enumerate() {
-                                // 1. Offset
-                                let offset = format!("{}{:08x}: ", item_indent_str, i * 16);
-                                new_output.push_str(&offset);
-
-                                // 2. Hex values
-                                let mut hex_part = String::new();
-                                for &byte in chunk {
-                                    hex_part.push_str(&format!("{:02x} ", byte));
-                                }
-                                new_output.push_str(&hex_part);
-
-                                // Add padding if the chunk is smaller than 16
-                                if chunk.len() < 16 {
-                                    for _ in 0..(16 - chunk.len()) {
-                                        new_output.push_str("   ");
-                                    }
-                                }
-
-                                // 3. ASCII representation
-                                let ascii_part: String = chunk
-                                    .iter()
-                                    .map(|&b| {
-                                        if b >= 0x20 && b <= 0x7e {
-                                            b as char
-                                        } else {
-                                            '.'
-                                        }
-                                    })
-                                    .collect();
-                                new_output.push_str(&format!(" |{}|\n", ascii_part));
-                            }
-                            return new_output.trim_end().to_string();
-                        } else {
-                            // Compact display for other simple types
-                            let items_str: Vec<String> = arr
-                                .iter()
-                                .map(|item| {
-                                    match item {
-                                        Value::Str(s) => format!("\"{}\"", s),
-                                        Value::Signature(s) => format!("'{}'", s),
-                                        _ => item.to_string(), // Uses Display impl for primitives
-                                    }
-                                })
-                                .collect();
-                            return format!("{}{} [{}[]]: [{}]",
-                                indent_str, prefix, first_type_str, items_str.join(", "));
-                        }
-                    }
-                }
-
-                // Fallback for all other array types (heterogeneous or complex elements).
-                output = format!("{}{} [array]:\n", indent_str, prefix);
-                for (i, item) in arr.iter().enumerate() {
-                    output.push_str(&format_recursive(item, indent + 1, &i.to_string()));
-                    output.push('\n');
-                }
-            }
-            Value::Structure(s) => {
-                if s.fields().is_empty() {
-                    return format!("{}{} [struct]: (empty)", indent_str, prefix);
-                }
-                for (i, field) in s.fields().iter().enumerate() {
-                    output.push_str(&format_recursive(
-                        field,
-                        indent + 1,
-                        &format!("i_{}", i + 1),
-                    ));
-                    output.push('\n');
-                }
-            }
-            Value::Dict(d) => {
-                if d.iter().count() == 0 {
-                    return format!("{}{} [dict]: {{}}", indent_str, prefix);
-                }
-
-                let mut entries: Vec<(String, &Value)> = Vec::new();
-                let mut max_key_len = 0;
-
-                // First pass: collect key strings and find the maximum key length for alignment.
-                for (k, v) in d.iter() {
-                    let key_str = match k {
-                        Value::Str(s) => s.to_string(),
-                        _ => format!("{:?}", k).trim_matches('"').to_string(),
-                    };
-                    max_key_len = max_key_len.max(key_str.len());
-                    entries.push((key_str, v));
-                }
-
-                let mut dict_output_lines = Vec::new();
-                let inner_indent_for_value = indent + 1; // Indent level for the dictionary items
-                let inner_indent_str = "  ".repeat(inner_indent_for_value);
-
-                // Second pass: format each entry with alignment.
-                for (key_str, v) in entries {
-                    let padding_for_key = " ".repeat(max_key_len.saturating_sub(key_str.len()));
-
-                    // format_recursive(v, 0, "") will produce "[type]: value" or multi-line complex structure
-                    // starting without initial indent or prefix.
-                    let formatted_value_segment = format_recursive(v, 0, "");
-
-                    let lines: Vec<&str> = formatted_value_segment.lines().collect();
-
-                    if lines.is_empty() {
-                        dict_output_lines.push(format!(
-                            "{}{} {}:",
-                            inner_indent_str, key_str, padding_for_key
-                        ));
-                    } else {
-                        dict_output_lines.push(format!(
-                            "{}{} {}: {}",
-                            inner_indent_str, key_str, padding_for_key, lines[0]
-                        ));
-
-                        // Calculate the column where the value starts for subsequent lines.
-                        // This is current indent + key_str_len + padding + ": " (which is 2 characters)
-                        let value_start_col = (inner_indent_for_value * 2) + max_key_len + 2;
-                        for &line in lines.iter().skip(1) {
-                            dict_output_lines.push(format!(
-                                "{}{}",
-                                " ".repeat(value_start_col),
-                                line
-                            ));
-                        }
-                    }
-                }
-                output.push_str(&dict_output_lines.join("\n"));
-            }
-            // This case will now not be hit for Value::Value, but is kept for other complex types.
             _ => {
-                output.push_str(&format!("{}{:?}", "  ".repeat(indent + 1), value));
-                output.push('\n');
+                // Continue to complex types
+                lines.push(Line::styled(
+                    format!("{}{} [{}]:", indent_str, prefix, get_value_type_str(value)),
+                    current_item_style,
+                ));
+
+                match value {
+                    Value::Array(arr) => {
+                        if arr.is_empty() {
+                            lines.pop(); // Remove the "[array]:" line
+                            lines.push(Line::styled(
+                                format!("{}{} [array]: []", indent_str, prefix),
+                                current_item_style,
+                            ));
+                        } else {
+                            // Special Case 1: Array of `(String, Value)` structs, to be displayed like a dict.
+                            let is_kv_struct_array = arr.iter().all(|item| {
+                                if let Value::Structure(s) = item {
+                                    if s.fields().len() == 2 {
+                                        if let Value::Str(_) = &s.fields()[0] {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                false
+                            });
+
+                            if is_kv_struct_array {
+                                lines.pop(); // Remove the "[array]:" line for this special case
+                                lines.push(Line::styled(
+                                    format!("{}{} [struct[]]:", indent_str, prefix),
+                                    current_item_style,
+                                ));
+                                let key_indent_str = "  ".repeat(indent + 1);
+
+                                for (i, item) in arr.iter().enumerate() {
+                                    if let Value::Structure(s) = item {
+                                        if let (Value::Str(key), val) =
+                                            (&s.fields()[0], &s.fields()[1])
+                                        {
+                                            lines.push(Line::styled(
+                                                format!("{}{}:", key_indent_str, key),
+                                                current_item_style,
+                                            ));
+                                            lines.extend(format_recursive(
+                                                val,
+                                                indent + 2,
+                                                "",
+                                                i,
+                                                config,
+                                            ));
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Special Case 2: Homogeneous array of simple types.
+                                let first_val = &arr[0];
+                                let is_simple_type = !matches!(
+                                    first_val,
+                                    Value::Array(_)
+                                        | Value::Structure(_)
+                                        | Value::Dict(_)
+                                        | Value::Value(_)
+                                );
+
+                                if is_simple_type {
+                                    let first_type_str = get_value_type_str(first_val);
+                                    let all_same_simple_type = arr
+                                        .iter()
+                                        .skip(1)
+                                        .all(|v| get_value_type_str(v) == first_type_str);
+
+                                    if all_same_simple_type {
+                                        if first_type_str == "u8" {
+                                            lines.pop(); // Remove the "[array]:" line for this special case
+                                            let bytes: Vec<u8> = arr
+                                                .iter()
+                                                .filter_map(|v| {
+                                                    if let Value::U8(b) = v {
+                                                        Some(*b)
+                                                    } else {
+                                                        None
+                                                    }
+                                                })
+                                                .collect();
+
+                                            lines.push(Line::styled(
+                                                format!("{}{} [ay (u8[])]:", indent_str, prefix),
+                                                current_item_style,
+                                            ));
+                                            let item_indent_str = "  ".repeat(indent + 1);
+
+                                            for (i, chunk) in bytes.chunks(16).enumerate() {
+                                                let mut line_text = String::new();
+                                                // 1. Offset
+                                                line_text.push_str(&format!(
+                                                    "{}{:08x}: ",
+                                                    item_indent_str,
+                                                    i * 16
+                                                ));
+
+                                                // 2. Hex values
+                                                let mut hex_part = String::new();
+                                                for &byte in chunk {
+                                                    hex_part.push_str(&format!("{:02x} ", byte));
+                                                }
+                                                line_text.push_str(&hex_part);
+
+                                                // Add padding if the chunk is smaller than 16
+                                                if chunk.len() < 16 {
+                                                    for _ in 0..(16 - chunk.len()) {
+                                                        line_text.push_str("   ");
+                                                    }
+                                                }
+
+                                                // 3. ASCII representation
+                                                let ascii_part: String = chunk
+                                                    .iter()
+                                                    .map(|&b| {
+                                                        if b >= 0x20 && b <= 0x7e {
+                                                            b as char
+                                                        } else {
+                                                            '.'
+                                                        }
+                                                    })
+                                                    .collect();
+                                                line_text.push_str(&format!(" |{}|", ascii_part));
+                                                lines.push(Line::styled(
+                                                    line_text,
+                                                    current_item_style,
+                                                ));
+                                            }
+                                        } else {
+                                            // Compact display for other simple types
+                                            lines.pop(); // Remove the "[array]:" line
+                                            let items_str: Vec<String> = arr
+                                                .iter()
+                                                .map(|item| {
+                                                    match item {
+                                                        Value::Str(s) => format!("\"{}\"", s),
+                                                        Value::Signature(s) => format!("'{}'", s),
+                                                        _ => item.to_string(), // Uses Display impl for primitives
+                                                    }
+                                                })
+                                                .collect();
+                                            lines.push(Line::styled(
+                                                format!(
+                                                    "{}{} [{}[]]: [{}]",
+                                                    indent_str,
+                                                    prefix,
+                                                    first_type_str,
+                                                    items_str.join(", ")
+                                                ),
+                                                current_item_style,
+                                            ));
+                                        }
+                                    } else {
+                                        // Fallback for heterogeneous simple types array
+                                        for (i, item) in arr.iter().enumerate() {
+                                            lines.extend(format_recursive(
+                                                item,
+                                                indent + 1,
+                                                &i.to_string(),
+                                                i,
+                                                config,
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    // Fallback for all other array types (heterogeneous or complex elements).
+                                    for (i, item) in arr.iter().enumerate() {
+                                        lines.extend(format_recursive(
+                                            item,
+                                            indent + 1,
+                                            &i.to_string(),
+                                            i,
+                                            config,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Value::Structure(s) => {
+                        if s.fields().is_empty() {
+                            lines.pop(); // Remove the "[struct]:" line
+                            lines.push(Line::styled(
+                                format!("{}{} [struct]: (empty)", indent_str, prefix),
+                                current_item_style,
+                            ));
+                        } else {
+                            for (i, field) in s.fields().iter().enumerate() {
+                                lines.extend(format_recursive(
+                                    field,
+                                    indent + 1,
+                                    &format!("i_{}", i + 1),
+                                    i, // Pass current index for alternating
+                                    config,
+                                ));
+                            }
+                        }
+                    }
+                    Value::Dict(d) => {
+                        if d.iter().count() == 0 {
+                            lines.pop(); // Remove the "[dict]:" line
+                            lines.push(Line::styled(
+                                format!("{}{} [dict]: {{}}", indent_str, prefix),
+                                current_item_style,
+                            ));
+                        } else {
+                            let mut entries: Vec<(String, &Value)> = Vec::new();
+                            let mut max_key_len = 0;
+
+                            for (k, v) in d.iter() {
+                                let key_str = match k {
+                                    Value::Str(s) => s.to_string(),
+                                    _ => format!("{:?}", k).trim_matches('"').to_string(),
+                                };
+                                max_key_len = max_key_len.max(key_str.len());
+                                entries.push((key_str, v));
+                            }
+
+                            let inner_indent_for_value = indent + 1;
+                            let inner_indent_str = "  ".repeat(inner_indent_for_value);
+
+                            for (i, (key_str, val)) in entries.into_iter().enumerate() {
+                                let padding_for_key =
+                                    " ".repeat(max_key_len.saturating_sub(key_str.len()));
+
+                                let formatted_value_lines = format_recursive(val, 0, "", i, config);
+
+                                if formatted_value_lines.is_empty() {
+                                    lines.push(Line::styled(
+                                        format!(
+                                            "{}{} {}:",
+                                            inner_indent_str, key_str, padding_for_key
+                                        ),
+                                        current_item_style,
+                                    ));
+                                } else {
+                                    // First line of value
+                                    let mut first_line_text = formatted_value_lines[0]
+                                        .spans
+                                        .iter()
+                                        .map(|s| s.content.to_string())
+                                        .collect::<String>();
+                                    // Remove any leading spaces from the first line of the value, as the key already provides indentation.
+                                    first_line_text = first_line_text.trim_start().to_string();
+
+                                    lines.push(Line::styled(
+                                        format!(
+                                            "{}{} {}: {}",
+                                            inner_indent_str,
+                                            key_str,
+                                            padding_for_key,
+                                            first_line_text
+                                        ),
+                                        current_item_style,
+                                    ));
+
+                                    let value_start_col =
+                                        (inner_indent_for_value * 2) + max_key_len + 2;
+                                    for line in formatted_value_lines.into_iter().skip(1) {
+                                        let line_content = line
+                                            .spans
+                                            .iter()
+                                            .map(|s| s.content.to_string())
+                                            .collect::<String>();
+                                        lines.push(Line::styled(
+                                            format!(
+                                                "{}{}",
+                                                " ".repeat(value_start_col),
+                                                line_content
+                                            ),
+                                            current_item_style,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        lines.push(Line::styled(
+                            format!("{}{:?}", "  ".repeat(indent + 1), value),
+                            current_item_style,
+                        ));
+                    }
+                }
             }
         }
-
-        output.trim_end().to_string()
+        lines
     }
 
+    let mut all_lines: Vec<Line<'static>> = Vec::new();
     // Special handling for top-level `Structure` to match desired output format.
     if let Value::Structure(s) = value {
-        let mut output = String::new();
         for (i, field) in s.fields().iter().enumerate() {
-            output.push_str(&format_recursive(field, 0, &format!("i_{}", i + 1)));
-            output.push('\n');
+            all_lines.extend(format_recursive(
+                field,
+                0,
+                &format!("i_{}", i + 1),
+                i,
+                config,
+            ));
         }
-        return output.trim_end().to_string();
+    } else {
+        // Fallback for any non-Structure top-level value.
+        all_lines.extend(format_recursive(value, 0, "value", 0, config));
     }
-
-    // Fallback for any non-Structure top-level value.
-    format_recursive(value, 0, "value")
+    Text::from(all_lines)
 }
 
 /// Helper function to create a centered rectangle given a percentage of the available area.

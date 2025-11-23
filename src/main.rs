@@ -42,7 +42,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            color_dict: Color::Rgb(20, 20, 40), // Dark Blue
+            color_dict: Color::Rgb(20, 20, 40),   // Dark Blue
             color_struct: Color::Rgb(40, 20, 40), // Dark Magenta
             color_default_stripe: Color::DarkGray,
         }
@@ -163,9 +163,8 @@ async fn run<'a>(
                 .cloned()
                 .collect();
 
-            app.filtered_and_sorted_items.sort_by(|a, b| {
-                a.sender.cmp(&b.sender).then(a.timestamp.cmp(&b.timestamp))
-            });
+            app.filtered_and_sorted_items
+                .sort_by(|a, b| a.sender.cmp(&b.sender).then(a.timestamp.cmp(&b.timestamp)));
 
             let mut last_sender: Option<String> = None;
             app.list_items = app
@@ -196,7 +195,7 @@ async fn run<'a>(
                 .collect();
         }
 
-        terminal.draw(|f| ui::ui(f, app, config))?;
+        terminal.draw(|f| ui::ui(f, app))?;
 
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
@@ -248,7 +247,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app);
+                                        update_detail_text(app, config);
                                     }
                                 }
                             }
@@ -260,7 +259,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app);
+                                        update_detail_text(app, config);
                                     }
                                 }
                             }
@@ -268,7 +267,7 @@ async fn run<'a>(
                                 if app.show_details {
                                     app.show_details = false;
                                 } else {
-                                    update_detail_text(app);
+                                    update_detail_text(app, config);
                                     app.show_details = true;
                                 }
                             }
@@ -305,7 +304,8 @@ async fn run<'a>(
                             }
                             KeyCode::Char('c') => {
                                 if app.show_details {
-                                    let text_to_copy = app.detail_text.clone();
+                                    let text_to_copy_text = app.detail_text.clone();
+                                    let text_to_copy = text_to_copy_text.to_string();
                                     let file_path = "/tmp/d-buddy-details.txt";
                                     let file_write_status =
                                         match fs::write(file_path, text_to_copy.as_bytes()).await {
@@ -371,30 +371,85 @@ async fn run<'a>(
 }
 
 /// A helper function to generate the detail text for the currently selected message.
-fn update_detail_text(app: &mut App<'_>) {
+fn update_detail_text(app: &mut App<'_>, config: &Config) {
     if let Some(selected) = app.list_state.selected() {
         if let Some(item) = app.filtered_and_sorted_items.get(selected) {
-            if let Some(message) = &item.message {
+            let mut header_lines: Vec<Line> = Vec::new();
+
+            header_lines.push(Line::from(vec![Span::styled(
+                "--- Header ---",
+                Style::default().fg(Color::LightCyan),
+            )]));
+            header_lines.push(Line::from(vec![
+                Span::styled("Stream: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{:?}", app.stream),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            header_lines.push(Line::from(vec![
+                Span::styled("Sender: ", Style::default().fg(Color::Gray)),
+                Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
+            ]));
+            if !item.receiver.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Receiver: ", Style::default().fg(Color::Gray)),
+                    Span::styled(item.receiver.clone(), Style::default().fg(Color::Red)),
+                ]));
+            }
+            header_lines.push(Line::from(vec![
+                Span::styled("Path: ", Style::default().fg(Color::Gray)),
+                Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
+            ]));
+            header_lines.push(Line::from(vec![
+                Span::styled("Member: ", Style::default().fg(Color::Gray)),
+                Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+            ]));
+            if item.is_reply {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Is Reply: ", Style::default().fg(Color::Gray)),
+                    Span::styled("Yes (Serial: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        item.reply_serial.clone(),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(")", Style::default().fg(Color::Yellow)),
+                ]));
+            } else if !item.serial.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Serial: ", Style::default().fg(Color::Gray)),
+                    Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
+                ]));
+            }
+            header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
+
+            let detail_text = if let Some(message) = &item.message {
                 let body = message.body();
                 let body_sig = body.signature();
 
-                app.detail_text = if body_sig.to_string().is_empty() {
-                    "[No message body]".to_string()
+                if body_sig.to_string().is_empty() {
+                    Text::from("[No message body]")
                 } else {
                     match body.deserialize::<Structure>() {
-                        Ok(structure) => ui::format_value(&Value::from(structure)),
+                        Ok(structure) => ui::format_value(&Value::from(structure), config),
                         Err(_) => match body.deserialize::<Value>() {
-                            Ok(value) => ui::format_value(&value),
-                            Err(e) => format!(
+                            Ok(value) => ui::format_value(&value, config),
+                            Err(e) => Text::from(format!(
                                 "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
                                 body_sig, e
-                            ),
+                            )),
                         },
                     }
-                };
+                }
             } else {
-                app.detail_text = "[No message body]".to_string();
-            }
+                Text::from("[No message body]")
+            };
+
+            // Prepend header to detail_text
+            let mut header_text = Text::from(header_lines);
+            header_text.extend(detail_text); // Extend appends lines from one Text to another
+            app.detail_text = header_text;
+
             app.detail_scroll = 0;
         }
     }
