@@ -91,47 +91,10 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             (false, false) => "",
         };
 
-        let title_spans = if let Some(selected_index) = app.list_state.selected() {
-            if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
-                let recipient_info = if item.receiver.is_empty() {
-                    Span::raw("")
-                } else {
-                    Span::raw(format!(" -> {}", item.receiver))
-                };
-                let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
-                    Span::raw(format!("->{}", item.reply_serial))
-                } else {
-                    Span::raw("")
-                };
-
-                Line::from(vec![
-                    Span::raw("Message Details "),
-                    Span::raw(scroll_indicator),
-                    Span::raw(" "),
-                    Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
-                    recipient_info,
-                    Span::raw("|"),
-                    Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
-                    reply_serial_info,
-                    Span::raw("|"),
-                    Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
-                    Span::raw(":"),
-                    Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
-                ])
-            } else {
-                // Fallback if item is not found (shouldn't happen if selected_index is valid)
-                Line::from(format!(
-                    "Message Details {} (Error: Item not found)",
-                    scroll_indicator
-                ))
-            }
-        } else {
-            // Fallback if no item is selected
-            Line::from(format!(
-                "Message Details {} (No item selected)",
-                scroll_indicator
-            ))
-        };
+        let title_spans = Line::from(vec![
+            Span::raw("Message Details "),
+            Span::raw(scroll_indicator),
+        ]);
         let block = Block::default().title(title_spans).borders(Borders::ALL);
 
         // Create a Paragraph widget with the pre-formatted detail text and scroll state

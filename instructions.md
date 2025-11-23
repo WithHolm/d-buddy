@@ -16,7 +16,9 @@ The application has been recently refactored to support multiple D-Bus streams (
 * AI before it can change code, create a new file at root called current, with what it needs to do and recomended steps (your plan). you can afterwards replace all content inside this file every time you want to update the codebase.
 * please stop and wait after every step. dont just run through everything autonomously.
 * update this file when a task has been completed.
-* dont run git command, remind me to commit changes after each task completion. provide a commit message
+* dont run git command, remind me to commit changes after each task completion.
+* NEVER RUN ANY GIT COMMANDS.
+* dont run cargo clippy 
 
 ---
 

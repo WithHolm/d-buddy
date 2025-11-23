@@ -296,6 +296,11 @@ async fn run<'a>(
                     ListItem::new(line)
                 })
                 .collect();
+            
+            // BUGFIX: Ensure an item is selected by default if the list is not empty
+            if app.list_state.selected().is_none() && !app.list_items.is_empty() {
+                app.list_state.select(Some(0));
+            }
         }
 
         terminal.draw(|f| ui::ui(f, app))?;
