@@ -33,6 +33,22 @@ struct Args {
     check: bool,
 }
 
+pub struct Config {
+    pub detail_level_colors: Vec<Color>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            detail_level_colors: vec![
+                Color::DarkGray,
+                Color::Rgb(20, 20, 40), // Dark Blue
+                Color::Rgb(40, 20, 40), // Dark Magenta
+            ],
+        }
+    }
+}
+
 // Enum to define the current operating mode of the application
 enum Mode {
     Normal,    // Default mode for browsing D-Bus messages
@@ -43,6 +59,7 @@ enum Mode {
 struct App<'a> {
     stream: BusType,
     messages: HashMap<BusType, Arc<tokio::sync::Mutex<Vec<Item>>>>,
+    filtered_and_sorted_items: Vec<Item>,
     list_items: Vec<ListItem<'a>>,
     list_state: ListState, // State of the message list widget (e.g., selected item)
     show_details: bool,    // Flag to indicate if message details popup should be shown
@@ -59,6 +76,7 @@ impl Default for App<'_> {
         App {
             stream: BusType::Session,
             messages: HashMap::new(), // Initialize with an empty list of messages
+            filtered_and_sorted_items: Vec::new(),
             list_items: Vec::new(),
             list_state: ListState::default(), // Default list state (no item selected)
             show_details: false,              // Details popup is hidden by default
@@ -75,6 +93,7 @@ impl Default for App<'_> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let config = Config::default();
 
     let mut app = App::default();
     let session_messages = bus::dbus_listener(BusType::Session).await?;
@@ -89,7 +108,7 @@ async fn main() -> Result<()> {
         Ok(())
     } else {
         let mut terminal = setup_terminal()?;
-        run(&mut terminal, &mut app).await?;
+        run(&mut terminal, &mut app, &config).await?;
         restore_terminal()?;
         Ok(())
     }
@@ -122,6 +141,7 @@ fn restore_terminal() -> Result<()> {
 async fn run<'a>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App<'a>,
+    config: &Config,
 ) -> Result<()> {
     let mut event_stream = EventStream::new();
     let mut clipboard = Clipboard::new().unwrap();
@@ -132,17 +152,36 @@ async fn run<'a>(
         {
             let messages = app.messages.get(&app.stream).unwrap().lock().await;
             let filter_text = app.input.value();
-            app.list_items = messages
+
+            app.filtered_and_sorted_items = messages
                 .iter()
                 .filter(|item| {
                     item.sender.contains(filter_text)
                         || item.member.contains(filter_text)
                         || item.path.contains(filter_text)
                 })
+                .cloned()
+                .collect();
+
+            app.filtered_and_sorted_items.sort_by(|a, b| {
+                a.sender.cmp(&b.sender).then(a.timestamp.cmp(&b.timestamp))
+            });
+
+            let mut last_sender: Option<String> = None;
+            app.list_items = app
+                .filtered_and_sorted_items
+                .iter()
                 .map(|item| {
+                    let indent = if last_sender.as_ref() == Some(&item.sender) {
+                        "  "
+                    } else {
+                        last_sender = Some(item.sender.clone());
+                        ""
+                    };
                     let dt: DateTime<Local> = item.timestamp.into();
                     let timestamp = dt.format("%H:%M:%S%.3f").to_string();
                     let line = Line::from(vec![
+                        Span::raw(indent),
                         Span::raw("["),
                         Span::styled(timestamp, Style::default().fg(Color::Yellow)),
                         Span::raw("] sender: "),
@@ -157,7 +196,7 @@ async fn run<'a>(
                 .collect();
         }
 
-        terminal.draw(|f| ui::ui(f, app))?;
+        terminal.draw(|f| ui::ui(f, app, config))?;
 
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
@@ -184,6 +223,22 @@ async fn run<'a>(
                                 };
                                 app.list_state.select(None); // Reset selection
                             }
+                            KeyCode::Char('x') => {
+                                if let Some(messages_arc) = app.messages.get(&app.stream) {
+                                    let mut messages = messages_arc.lock().await;
+                                    messages.clear();
+                                    app.list_state.select(None);
+                                }
+                            }
+                            KeyCode::Char('a') => {
+                                if let Some(selected) = app.list_state.selected() {
+                                    if let Some(item) = app.filtered_and_sorted_items.get(selected)
+                                    {
+                                        app.input = Input::from(item.sender.as_str());
+                                        app.mode = Mode::Filtering;
+                                    }
+                                }
+                            }
                             KeyCode::Char('/') => app.mode = Mode::Filtering,
                             KeyCode::Up => {
                                 if !app.list_items.is_empty() {
@@ -193,7 +248,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app).await;
+                                        update_detail_text(app, config);
                                     }
                                 }
                             }
@@ -205,7 +260,7 @@ async fn run<'a>(
                                     };
                                     app.list_state.select(Some(i));
                                     if app.show_details {
-                                        update_detail_text(app).await;
+                                        update_detail_text(app, config);
                                     }
                                 }
                             }
@@ -213,13 +268,39 @@ async fn run<'a>(
                                 if app.show_details {
                                     app.show_details = false;
                                 } else {
-                                    update_detail_text(app).await;
+                                    update_detail_text(app, config);
                                     app.show_details = true;
                                 }
                             }
                             KeyCode::Esc => {
                                 if app.show_details {
                                     app.show_details = false;
+                                }
+                            }
+                            KeyCode::Char('r') => {
+                                if let Some(selected) = app.list_state.selected() {
+                                    if let Some(item) = app.filtered_and_sorted_items.get(selected)
+                                    {
+                                        let bus_type = match app.stream {
+                                            BusType::Session => "--session",
+                                            BusType::System => "--system",
+                                            BusType::Both => "--session", // Default
+                                        };
+                                        let command = format!(
+                                            "dbus-send {} --dest={} {} <interface>.<member>",
+                                            bus_type, item.sender, item.path
+                                        );
+                                        match clipboard.set_text(command.clone()) {
+                                            Ok(_) => {
+                                                app.status_message =
+                                                    format!("Copied to clipboard: {}", command);
+                                            }
+                                            Err(e) => {
+                                                app.status_message =
+                                                    format!("Failed to copy to clipboard: {}", e);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             KeyCode::Char('c') => {
@@ -290,10 +371,9 @@ async fn run<'a>(
 }
 
 /// A helper function to generate the detail text for the currently selected message.
-async fn update_detail_text(app: &mut App<'_>) {
+fn update_detail_text(app: &mut App<'_>, config: &Config) {
     if let Some(selected) = app.list_state.selected() {
-        let messages = app.messages.get(&app.stream).unwrap().lock().await;
-        if let Some(item) = messages.get(selected) {
+        if let Some(item) = app.filtered_and_sorted_items.get(selected) {
             if let Some(message) = &item.message {
                 let body = message.body();
                 let body_sig = body.signature();
@@ -302,9 +382,9 @@ async fn update_detail_text(app: &mut App<'_>) {
                     "[No message body]".to_string()
                 } else {
                     match body.deserialize::<Structure>() {
-                        Ok(structure) => ui::format_value(&Value::from(structure)),
+                        Ok(structure) => ui::format_value(&Value::from(structure), config),
                         Err(_) => match body.deserialize::<Value>() {
-                            Ok(value) => ui::format_value(&value),
+                            Ok(value) => ui::format_value(&value, config),
                             Err(e) => format!(
                                 "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
                                 body_sig, e

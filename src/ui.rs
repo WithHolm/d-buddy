@@ -54,8 +54,25 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         };
         let block = Block::default().title(title).borders(Borders::ALL);
 
+        let mut item_index = 0;
+        let text_lines: Vec<Line> = app
+            .detail_text
+            .lines()
+            .map(|line| {
+                if !line.starts_with(' ') {
+                    item_index += 1;
+                }
+                let style = if item_index % 2 == 0 {
+                    Style::default()
+                } else {
+                    Style::default().bg(Color::DarkGray)
+                };
+                Line::styled(line, style)
+            })
+            .collect();
+
         // Create a Paragraph widget with the pre-formatted detail text and scroll state
-        let paragraph = Paragraph::new(app.detail_text.clone())
+        let paragraph = Paragraph::new(text_lines)
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((app.detail_scroll, 0));
@@ -101,9 +118,15 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
                     "q".bold().cyan(),
                     ": quit | ".into(),
                     "Tab".bold().cyan(),
-                    ": change view | ".into(),
+                    ": view | ".into(),
                     "/".bold().cyan(),
                     ": filter | ".into(),
+                    "a".bold().cyan(),
+                    ": autofilter | ".into(),
+                    "r".bold().cyan(),
+                    ": reply | ".into(),
+                    "x".bold().cyan(),
+                    ": clear | ".into(),
                     "s".bold().cyan(),
                     "/".dim(),
                     "space".bold().cyan(),
@@ -187,7 +210,7 @@ pub fn format_value(value: &Value) -> String {
         match value {
             Value::Array(arr) => {
                 if arr.is_empty() {
-                    return format!("{}{} [array]: (empty)", indent_str, prefix);
+                    return format!("{}{} [array]: []", indent_str, prefix);
                 }
 
                 // Special Case 1: Array of `(String, Value)` structs, to be displayed like a dict.
@@ -221,11 +244,11 @@ pub fn format_value(value: &Value) -> String {
                     return new_output.trim_end().to_string();
                 }
 
-                // Special Case 2: Homogenous array of simple types.
+                // Special Case 2: Homogeneous array of simple types.
                 let first_val = &arr[0];
                 let is_simple_type = !matches!(
                     first_val,
-                    Value::Array(_) | Value::Structure(_) | Value::Dict(_)
+                    Value::Array(_) | Value::Structure(_) | Value::Dict(_) | Value::Value(_)
                 );
 
                 if is_simple_type {
@@ -236,35 +259,68 @@ pub fn format_value(value: &Value) -> String {
                         .all(|v| get_value_type_str(v) == first_type_str);
 
                     if all_same_simple_type {
-                        let mut new_output =
-                            format!("{}{} [{}[]]:\n", indent_str, prefix, first_type_str);
-                        let item_indent_str = "  ".repeat(indent + 1);
-
                         if first_type_str == "u8" {
-                            for item in arr.iter() {
-                                if let Value::U8(b) = item {
-                                    new_output.push_str(&format!(
-                                        "{}byte 0x{:02x}\n",
-                                        item_indent_str, b
-                                    ));
+                            let bytes: Vec<u8> = arr
+                                .iter()
+                                .filter_map(|v| if let Value::U8(b) = v { Some(*b) } else { None })
+                                .collect();
+
+                            let mut new_output =
+                                format!("{}{} [ay (u8[])]:\n", indent_str, prefix);
+                            let item_indent_str = "  ".repeat(indent + 1);
+
+                            for (i, chunk) in bytes.chunks(16).enumerate() {
+                                // 1. Offset
+                                let offset = format!("{}{:08x}: ", item_indent_str, i * 16);
+                                new_output.push_str(&offset);
+
+                                // 2. Hex values
+                                let mut hex_part = String::new();
+                                for &byte in chunk {
+                                    hex_part.push_str(&format!("{:02x} ", byte));
                                 }
+                                new_output.push_str(&hex_part);
+
+                                // Add padding if the chunk is smaller than 16
+                                if chunk.len() < 16 {
+                                    for _ in 0..(16 - chunk.len()) {
+                                        new_output.push_str("   ");
+                                    }
+                                }
+
+                                // 3. ASCII representation
+                                let ascii_part: String = chunk
+                                    .iter()
+                                    .map(|&b| {
+                                        if b >= 0x20 && b <= 0x7e {
+                                            b as char
+                                        } else {
+                                            '.'
+                                        }
+                                    })
+                                    .collect();
+                                new_output.push_str(&format!(" |{}|\n", ascii_part));
                             }
+                            return new_output.trim_end().to_string();
                         } else {
-                            for item in arr.iter() {
-                                let value_content = match item {
-                                    Value::Str(s) => format!("\"{}\"", s),
-                                    Value::Signature(s) => format!("'{}'", s),
-                                    _ => item.to_string(),
-                                };
-                                new_output
-                                    .push_str(&format!("{}{}\n", item_indent_str, value_content));
-                            }
+                            // Compact display for other simple types
+                            let items_str: Vec<String> = arr
+                                .iter()
+                                .map(|item| {
+                                    match item {
+                                        Value::Str(s) => format!("\"{}\"", s),
+                                        Value::Signature(s) => format!("'{}'", s),
+                                        _ => item.to_string(), // Uses Display impl for primitives
+                                    }
+                                })
+                                .collect();
+                            return format!("{}{} [{}[]]: [{}]",
+                                indent_str, prefix, first_type_str, items_str.join(", "));
                         }
-                        return new_output.trim_end().to_string();
                     }
                 }
 
-                // Fallback for all other array types.
+                // Fallback for all other array types (heterogeneous or complex elements).
                 output = format!("{}{} [array]:\n", indent_str, prefix);
                 for (i, item) in arr.iter().enumerate() {
                     output.push_str(&format_recursive(item, indent + 1, &i.to_string()));

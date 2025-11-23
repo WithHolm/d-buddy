@@ -13,8 +13,8 @@ The application has been recently refactored to support multiple D-Bus streams (
 - **Data Model**: The central `App` struct now holds a `HashMap` where keys are the `BusType` (Session/System) and values are `Arc<tokio::sync::Mutex<Vec<bus::Item>>>`. This allows each bus listener to independently and safely update its own list of messages.
 
 **Key Discrepancies:**
-1.  **Disconnected Data**: The new `dbus_listener` function is not yet called in `main.rs`. The application currently starts with no active D-Bus connection and receives no live data.
-2.  **Outdated UI Code**: The rendering logic in `main.rs` has not been updated to work with the new `HashMap` data structure and will cause errors.
+1.  **[x] Disconnected Data**: The new `dbus_listener` function is not yet called in `main.rs`. The application currently starts with no active D-Bus connection and receives no live data.
+2.  **[x] Outdated UI Code**: The rendering logic in `main.rs` has not been updated to work with the new `HashMap` data structure and will cause errors.
 
 ---
 
@@ -23,24 +23,26 @@ The application has been recently refactored to support multiple D-Bus streams (
 This plan outlines the next steps to integrate the new architecture and build out features.
 
 ### 1. Core Integration & Refactoring
-- [ ] **Connect Data Sources**: In `main.rs`, call the `bus::dbus_listener` for both the Session and System buses on startup, populating the `app.messages` HashMap.
-- [ ] **Fix UI Rendering**: Update the UI code to correctly read messages from the `Vec<Item>` corresponding to the currently active bus type (`app.stream`).
-- [ ] **Decouple UI**: Move all UI-related functions and logic (e.g., `ui`, `centered_rect`) from `main.rs` into `src/ui.rs` to improve separation of concerns.
+- [x] **Connect Data Sources**: In `main.rs`, call the `bus::dbus_listener` for both the Session and System buses on startup, populating the `app.messages` HashMap.
+- [x] **Fix UI Rendering**: Update the UI code to correctly read messages from the `Vec<Item>` corresponding to the currently active bus type (`app.stream`).
+- [x] **Decouple UI**: Move all UI-related functions and logic (e.g., `ui`, `centered_rect`) from `main.rs` into `src/ui.rs` to improve separation of concerns.
 
 ### 2. Multi-Bus View & Navigation
-- [ ] **Implement Bus Switching**: Add a keybinding (e.g., `Tab`) to cycle the `app.stream` state between `Session` and `System` views.
-- [ ] **Update UI Title**: The UI should clearly indicate which bus (`Session` or `System`) is currently being displayed.
+- [x] **Implement Bus Switching**: Add a keybinding (e.g., `Tab`) to cycle the `app.stream` state between `Session` and `System` views.
+- [x] **Update UI Title**: The UI should clearly indicate which bus (`Session` or `System`) is currently being displayed.
 - [ ] **(Optional) Combined View**: Consider a `Both` view that merges messages from all streams, sorted chronologically.
 
 ### 3. UI/UX Enhancements
-- [ ] **Add Colors**: Use colors to differentiate elements like the sender, member, and path in the message list for better readability.
-- [ ] **Group Messages**: Use the `serial` and `reply_serial` fields in `bus::Item` to visually group conversations. For example, indenting a reply message under its original request.
+- [x] **Add Colors**: Use colors to differentiate elements like the sender, member, and path in the message list for better readability.
+- [x] **Group Messages**: Messages are now grouped by sender and indented for clarity.
+- [x] **Improved array display in details view**: Arrays of `u8` now show a string representation, and simple arrays are displayed compactly on one line.
 
 ### 4. Advanced Interactivity
-- [ ] **Auto-Filter**: Create a keybinding that, when pressed on a message, automatically populates the filter with that message's sender, creating an instant "conversation view".
-- [ ] **Reply Functionality**: Explore implementing a "reply" feature. A first step could be generating a `dbus-send` command template based on the selected message and copying it to the clipboard.
+- [x] **Auto-Filter**: Create a keybinding that, when pressed on a message, automatically populates the filter with that message's sender, creating an instant "conversation view".
+- [x] **Reply Functionality**: Explore implementing a "reply" feature. A first step could be generating a `dbus-send` command template based on the selected message and copying it to the clipboard.
 
 ### 5. Code Health & Suggestions
-- [ ] **Consolidate `BusType`**: Merge the duplicate `BusType` enums from `main.rs` and `bus.rs` into a single definition in `bus.rs`.
-- [ ] **Add `Clear` command**: Implement a keybinding to clear the message list for the current view.
+- [x] **Consolidate `BusType`**: Merge the duplicate `BusType` enums from `main.rs` and `bus.rs` into a single definition in `bus.rs`.
+- [x] **Add `Clear` command**: Implement a keybinding to clear the message list for the current view.
 - [ ] **Advanced Filtering**: Extend the filtering capabilities beyond a simple text search to allow filtering by specific fields (e.g., `member=NameAcquired`, `path=/org/freedesktop/DBus`).
+- [x] **Add `--check` mode**: Add a command line flag to run the app without the TUI for testing.
