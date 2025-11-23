@@ -1,4 +1,5 @@
 use super::{App, Config, Mode};
+use crate::bus::BusType;
 use ratatui::{
     prelude::*,
     text::{Line, Text},
@@ -23,11 +24,33 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     let items = app.list_items.clone();
 
     // Create the List widget for displaying D-Bus messages
-    let title = format!("D-Bus Signals ({:?})", app.stream);
+    let (session_style, system_style) = match app.stream {
+        BusType::Session => (
+            Style::default().fg(Color::LightCyan).bold(),
+            Style::default().fg(Color::White).italic(),
+        ),
+        BusType::System => (
+            Style::default().fg(Color::White).italic(),
+            Style::default().fg(Color::LightCyan).bold(),
+        ),
+        _ => (
+            Style::default().fg(Color::White),
+            Style::default().fg(Color::White),
+        ), // Fallback for BusType::Both
+    };
+
+    let title_spans = Line::from(vec![
+        Span::raw("D-Bus Signals ["),
+        Span::styled("Session", session_style),
+        Span::raw("|"),
+        Span::styled("System", system_style),
+        Span::raw("]"),
+    ]);
+
     let list = List::new(items)
         .block(
             Block::default()
-                .title(title) // Set title for the block
+                .title(title_spans) // Set title for the block
                 .borders(Borders::ALL),
         )
         .highlight_symbol("> "); // Symbol to indicate selected item

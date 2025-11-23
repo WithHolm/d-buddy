@@ -12,9 +12,9 @@ The application has been recently refactored to support multiple D-Bus streams (
   - It provides an async `dbus_listener` function that connects to a specified bus (Session or System), spawns a background task to listen for signals, and populates a shared vector of `Item`s.
 - **Data Model**: The central `App` struct now holds a `HashMap` where keys are the `BusType` (Session/System) and values are `Arc<tokio::sync::Mutex<Vec<bus::Item>>>`. This allows each bus listener to independently and safely update its own list of messages.
 
-**Key Discrepancies:**
-1.  **[x] Disconnected Data**: The new `dbus_listener` function is not yet called in `main.rs`. The application currently starts with no active D-Bus connection and receives no live data.
-2.  **[x] Outdated UI Code**: The rendering logic in `main.rs` has not been updated to work with the new `HashMap` data structure and will cause errors.
+## AI
+* AI before it can change code, create a new file at root called current, with what it needs to do. you can afterwards replace all content inside this file every time you want to update the codebase.
+* please stop and wait after every step. dont just run through everything autonomously.
 
 ---
 
@@ -46,3 +46,15 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] **Add `Clear` command**: Implement a keybinding to clear the message list for the current view.
 - [ ] **Advanced Filtering**: Extend the filtering capabilities beyond a simple text search to allow filtering by specific fields (e.g., `member=NameAcquired`, `path=/org/freedesktop/DBus`).
 - [x] **Add `--check` mode**: Add a command line flag to run the app without the TUI for testing.
+
+
+### 6. UI/UX Enhancements
+- [] Main window can switch between `Session` and `System` buses, but it only shows the active one: please implement a visual indication that there is more. thinking [*session*|**system**] to indicate system is active.
+- [] the > field is only shown after you have pressed up or down to select messages
+- [] change filtering key from / to f
+- [] enhance the autofiler selection, where you can select sender, member, path, serial
+- [] ability to drill down and get the whole "thread" if 2 applications talk to eachother. each item has serial and reply serial. need to filter so every message and reply is shown.. this "drill down" need to be available from both main ui and details view.
+- [] remove color from main view if details pane is open
+- [] add is_reply to header in details view. this also needs to be shown in main view with a simple glyph 
+   - example: [timetamp] [glyph if is_reply] ....rest of data like it is now
+- [] fix header in details view: it should be at top besides "Message Details [...↓]" suggestion "Message details [data above or below thingy] {sender} -> {recipient}|{serial}->{reply_serial if is_reply}|{member}:{path}"
