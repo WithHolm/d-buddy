@@ -7,15 +7,15 @@ use zbus::{fdo::DBusProxy, Connection, MessageStream}; // Removed Message from h
 
 #[derive(Debug, Clone)]
 pub struct Item {
-    timestamp: SystemTime,
-    sender: String,
-    receiver: String,
-    member: String,
-    path: String,
-    message: Option<zbus::Message>,
-    serial: String,
-    reply_serial: String,
-    is_reply: bool,
+    pub timestamp: SystemTime,
+    pub sender: String,
+    pub receiver: String,
+    pub member: String,
+    pub path: String,
+    pub message: Option<zbus::Message>,
+    pub serial: String,
+    pub reply_serial: String,
+    pub is_reply: bool,
 }
 
 impl Default for Item {
@@ -35,13 +35,15 @@ impl Default for Item {
 }
 
 // what type of bus is this?
-enum BusType {
-    Session,
-    System,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BusType {
+    Session = 0,
+    System = 1,
+    Both = 2,
 }
 
 // creates a new dbus listener for the given but type. returns a lis
-async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
+pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
     let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let messages_clone = Arc::clone(&messages);
 
@@ -49,6 +51,13 @@ async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>>
     let conn: Connection = match t {
         BusType::Session => zbus::Connection::session().await?,
         BusType::System => zbus::Connection::system().await?,
+        BusType::Both => {
+            // This is a placeholder. "Both" would require merging two streams,
+            // which needs a more complex implementation.
+            // For now, we can default to session or return an error.
+            // Let's default to Session for now to avoid crashing.
+            zbus::Connection::session().await?
+        }
     };
 
     let proxy = DBusProxy::new(&conn).await?;
@@ -90,7 +99,7 @@ async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>>
                     .map(|s| s.to_string())
                     .unwrap_or_default(),
                 serial: header.primary().serial_num().to_string(),
-                message: msg,
+                message: Some(msg),
             };
 
             //push to messages_clone

@@ -2,12 +2,12 @@ use super::{App, Mode};
 use ratatui::{
     prelude::*,
     text::Line,
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, Paragraph, Wrap},
 };
-use zbus::zvariant::{Structure, Value};
+use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui(frame: &mut Frame, app: &mut App) {
+pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     // Define the main layout with two chunks: one for the message list, one for the input/status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -20,47 +20,14 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(100)].as_ref())
         .split(chunks[0]);
 
-    let filter_text = app.input.value(); // Get the current filter text from the input widget
-                                         // Prepare ListItems from D-Bus messages, filtering them if a filter is active
-    let items: Vec<ListItem> = app
-        .messages
-        .iter()
-        .filter(|msg| {
-            // Get D-Bus message header details
-            let header = msg.header();
-
-            let sender = header.sender().map(|s| s.as_str()).unwrap_or("");
-            let member = header.member().map(|s| s.as_str()).unwrap_or("");
-            let path = header.path().map(|p| p.as_str()).unwrap_or("");
-            // Check if any of the header fields contain the filter text
-            sender.contains(filter_text)
-                || member.contains(filter_text)
-                || path.contains(filter_text)
-        })
-        .map(|msg| {
-            // Format each message into a displayable string
-            let header = msg.header();
-            // let now = SystemTime::now().;
-            // let secs = now.as_secs();
-            // let millis = now.subsec_millis();
-            // let timestamp = format!("{}.{:03}", secs, millis);
-            let timestamp = "mm.ss.000";
-            let text = format!(
-                "[{}] sender: {}, member: {}, path:જી {}",
-                timestamp,
-                header.sender().map(|s| s.as_str()).unwrap_or(""),
-                header.member().map(|s| s.as_str()).unwrap_or(""),
-                header.path().map(|p| p.as_str()).unwrap_or(""),
-            );
-            ListItem::new(text) // Create a ListItem
-        })
-        .collect();
+    let items = app.list_items.clone();
 
     // Create the List widget for displaying D-Bus messages
+    let title = format!("D-Bus Signals ({:?})", app.stream);
     let list = List::new(items)
         .block(
             Block::default()
-                .title("D-Bus Signals") // Set title for the block
+                .title(title) // Set title for the block
                 .borders(Borders::ALL),
         )
         .highlight_symbol("> "); // Symbol to indicate selected item
@@ -114,34 +81,36 @@ pub fn ui(frame: &mut Frame, app: &mut App) {
                 Line::from(app.status_message.as_str().yellow())
             } else if app.show_details {
                 Line::from(vec![
-                    "c".bold(),
+                    "c".bold().cyan(),
                     ": copy | ".into(),
-                    "s".bold(),
+                    "s".bold().cyan(),
                     "/".dim(),
-                    "esc".bold(),
+                    "esc".bold().cyan(),
                     ": close | ".into(),
-                    "j".bold(),
+                    "j".bold().cyan(),
                     "/".dim(),
-                    "k".bold(),
+                    "k".bold().cyan(),
                     "/".dim(),
-                    "PgUp".bold(),
+                    "PgUp".bold().cyan(),
                     "/".dim(),
-                    "PgDn".bold(),
+                    "PgDn".bold().cyan(),
                     ": scroll".into(),
                 ])
             } else {
                 Line::from(vec![
-                    "q".bold(),
+                    "q".bold().cyan(),
                     ": quit | ".into(),
-                    "/".bold(),
+                    "Tab".bold().cyan(),
+                    ": change view | ".into(),
+                    "/".bold().cyan(),
                     ": filter | ".into(),
-                    "s".bold(),
+                    "s".bold().cyan(),
                     "/".dim(),
-                    "space".bold(),
+                    "space".bold().cyan(),
                     ": details | ".into(),
-                    "↑".bold(),
+                    "↑".bold().cyan(),
                     "/".dim(),
-                    "↓".bold(),
+                    "↓".bold().cyan(),
                     ": navigate".into(),
                 ])
             };

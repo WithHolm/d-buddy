@@ -4,29 +4,34 @@ mod ui;
 // Import necessary crates and modules
 use anyhow::Result; // For simplified error handling
 use arboard::Clipboard; // For clipboard access
+use chrono::{DateTime, Local};
+use clap::Parser;
 use crossterm::event::{Event, EventStream, KeyCode}; // For handling terminal events like key presses
 use futures::stream::StreamExt; // For extending stream functionality, used with zbus MessageStream
 use ratatui::prelude::*;
-use ratatui::widgets::ListState;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{ListItem, ListState};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 // UI widgets
-use bus::Item;
+use bus::{BusType, Item};
 use std::{
     io::{self, stdout},
     thread::sleep,
     time::Duration,
 }; // Standard I/O for terminal operations
-use tokio::{fs, sync::mpsc}; // Asynchronous multi-producer, single-consumer channel for message passing
+use tokio::fs; // Asynchronous multi-producer, single-consumer channel for message passing
 use tui_input::{backend::crossterm as input_backend, Input}; // For handling text input in the TUI
-use zbus::{
-    zvariant::{Structure, Value},
-    Message,
-}; // For D-Bus communication and message handling
+use zbus::zvariant::{Structure, Value};
 
-// Maximum number of D-Bus messages to retain in memory
-const MAX_MESSAGES: usize = 1000;
+/// A simple TUI for browsing D-Bus messages.
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Run in check mode without launching the TUI
+    #[arg(long)]
+    check: bool,
+}
 
 // Enum to define the current operating mode of the application
 enum Mode {
@@ -34,17 +39,11 @@ enum Mode {
     Filtering, // Mode for entering a filter string
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum BusType {
-    Session = 0,
-    System = 1,
-    Both = 2,
-}
-
 // Main application struct holding all the state
-struct App {
+struct App<'a> {
     stream: BusType,
-    messages: HashMap<BusType, Arc<tokio::sync::Mutex<Vec<bus::Item>>>>,
+    messages: HashMap<BusType, Arc<tokio::sync::Mutex<Vec<Item>>>>,
+    list_items: Vec<ListItem<'a>>,
     list_state: ListState, // State of the message list widget (e.g., selected item)
     show_details: bool,    // Flag to indicate if message details popup should be shown
     mode: Mode,            // Current operating mode (Normal or Filtering)
@@ -54,22 +53,13 @@ struct App {
     status_message: String, // A temporary message to show in the status bar
 }
 
-fn new_messages_hashmap() -> HashMap<BusType, Arc<tokio::sync::Mutex<Vec<bus::Item>>>> {
-    let mut map = HashMap::new();
-
-    for bus_type in [BusType::Session, BusType::System] {
-        map.insert(bus_type, Arc::new(tokio::sync::Mutex::new(Vec::new())));
-    }
-
-    map
-}
-
 // Default implementation for the App struct
-impl Default for App {
+impl Default for App<'_> {
     fn default() -> Self {
         App {
             stream: BusType::Session,
-            messages: new_messages_hashmap(), // Initialize with an empty list of messages
+            messages: HashMap::new(), // Initialize with an empty list of messages
+            list_items: Vec::new(),
             list_state: ListState::default(), // Default list state (no item selected)
             show_details: false,              // Details popup is hidden by default
             mode: Mode::Normal,               // Start in Normal mode
@@ -84,44 +74,25 @@ impl Default for App {
 // Main asynchronous entry point of the application
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup the terminal for TUI (raw mode, alternate screen)
-    let mut terminal = setup_terminal()?;
-    // Create an asynchronous channel to send D-Bus messages from the background task to the main loop
-    // let (tx, rx) = mpsc::channel(100);
-    // Connect to the D-Bus session bus
-    // let conn = zbus::Connection::session().await?;
-    // // Create a proxy for the D-Bus server itself.
-    // let proxy = DBusProxy::new(&conn).await?;
-    // Add a match rule to subscribe to all signals on the bus.
-    // This is a more robust way to ensure we receive broadcast signals.
-    // proxy
-    //     .add_match_rule(
-    //         zbus::MatchRule::builder()
-    //             .msg_type(zbus::message::Type::Signal)
-    //             .build(),
-    //     )
-    //     .await?;
-    // // Create a stream of D-Bus messages from the connection.
-    // let stream = MessageStream::from(&conn);
+    let args = Args::parse();
 
-    // // Spawn a background task to continuously receive D-Bus messages
-    // tokio::spawn(async move {
-    //     let mut stream = stream;
-    //     // Iterate over the message stream and send each message to the main application via the channel
-    //     while let Some(Ok(msg)) = stream.next().await {
-    //         if tx.send(msg).await.is_err() {
-    //             // If sending fails (e.g., receiver dropped), break the loop
-    //             break;
-    //         }
-    //     }
-    // });
-    //
+    let mut app = App::default();
+    let session_messages = bus::dbus_listener(BusType::Session).await?;
+    let system_messages = bus::dbus_listener(BusType::System).await?;
+    app.messages.insert(BusType::Session, session_messages);
+    app.messages.insert(BusType::System, system_messages);
 
-    // Run the main application loop
-    run(&mut terminal, rx).await?;
-    // Restore the terminal to its original state before exiting
-    restore_terminal()?;
-    Ok(())
+    if args.check {
+        println!("Check mode: Setup successful. App initialized and listeners started.");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        println!("Check finished.");
+        Ok(())
+    } else {
+        let mut terminal = setup_terminal()?;
+        run(&mut terminal, &mut app).await?;
+        restore_terminal()?;
+        Ok(())
+    }
 }
 
 // Sets up the terminal for TUI mode
@@ -148,141 +119,166 @@ fn restore_terminal() -> Result<()> {
 }
 
 // The main application event loop, now fully asynchronous
-async fn run(
+async fn run<'a>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    mut rx: mpsc::Receiver<Message>,
+    app: &mut App<'a>,
 ) -> Result<()> {
-    let mut app = App::default(); // Initialize the application state
-    let mut event_stream = EventStream::new(); // Create a stream of terminal events
+    let mut event_stream = EventStream::new();
     let mut clipboard = Clipboard::new().unwrap();
+    let tick_rate = Duration::from_millis(250);
 
     loop {
-        // Draw the UI, then wait for the next event.
-        terminal.draw(|f| ui::ui(f, &mut app))?;
+        // Create a scope to ensure the lock is released before drawing
+        {
+            let messages = app.messages.get(&app.stream).unwrap().lock().await;
+            let filter_text = app.input.value();
+            app.list_items = messages
+                .iter()
+                .filter(|item| {
+                    item.sender.contains(filter_text)
+                        || item.member.contains(filter_text)
+                        || item.path.contains(filter_text)
+                })
+                .map(|item| {
+                    let dt: DateTime<Local> = item.timestamp.into();
+                    let timestamp = dt.format("%H:%M:%S%.3f").to_string();
+                    let line = Line::from(vec![
+                        Span::raw("["),
+                        Span::styled(timestamp, Style::default().fg(Color::Yellow)),
+                        Span::raw("] sender: "),
+                        Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
+                        Span::raw(", member: "),
+                        Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+                        Span::raw(", path: "),
+                        Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
+                    ]);
+                    ListItem::new(line)
+                })
+                .collect();
+        }
 
-        // Use tokio::select! to wait for either a D-Bus message or a terminal event.
-        tokio::select! {
-            // Branch for receiving a D-Bus message.
-            Some(msg) = rx.recv() => {
-                if app.messages.len() == MAX_MESSAGES {
-                    app.messages.remove(0);
-                }
-                app.messages.push(msg);
-                // If no message is selected, select the newly added one.
-                if app.list_state.selected().is_none() {
-                    app.list_state.select(Some(app.messages.len() - 1));
-                }
-            }
+        terminal.draw(|f| ui::ui(f, app))?;
 
-            // Branch for receiving a terminal input event.
-            Some(Ok(event)) = event_stream.next() => {
-                 match app.mode {
-                    Mode::Normal => {
-                        if let Event::Key(key) = event {
-                            if !app.status_message.is_empty() {
-                                app.status_message.clear();
+        let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
+
+        if let Ok(Some(Ok(event))) = event_ready {
+            match app.mode {
+                Mode::Normal => {
+                    if let Event::Key(key) = event {
+                        if !app.status_message.is_empty() {
+                            app.status_message.clear();
+                        }
+
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                if !app.show_details {
+                                    break;
+                                }
+                                app.show_details = false;
                             }
-                            match key.code {
-                                KeyCode::Char('q') => {
-                                    if !app.show_details {
-                                        break
+                            KeyCode::Tab => {
+                                app.stream = match app.stream {
+                                    BusType::Session => BusType::System,
+                                    BusType::System => BusType::Session,
+                                    BusType::Both => BusType::Session, // Default cycle
+                                };
+                                app.list_state.select(None); // Reset selection
+                            }
+                            KeyCode::Char('/') => app.mode = Mode::Filtering,
+                            KeyCode::Up => {
+                                if !app.list_items.is_empty() {
+                                    let i = match app.list_state.selected() {
+                                        Some(i) => i.saturating_sub(1),
+                                        None => 0,
+                                    };
+                                    app.list_state.select(Some(i));
+                                    if app.show_details {
+                                        update_detail_text(app).await;
                                     }
+                                }
+                            }
+                            KeyCode::Down => {
+                                if !app.list_items.is_empty() {
+                                    let i = match app.list_state.selected() {
+                                        Some(i) => (i + 1).min(app.list_items.len() - 1),
+                                        None => 0,
+                                    };
+                                    app.list_state.select(Some(i));
+                                    if app.show_details {
+                                        update_detail_text(app).await;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('s') | KeyCode::Char(' ') => {
+                                if app.show_details {
+                                    app.show_details = false;
+                                } else {
+                                    update_detail_text(app).await;
+                                    app.show_details = true;
+                                }
+                            }
+                            KeyCode::Esc => {
+                                if app.show_details {
                                     app.show_details = false;
                                 }
-                                KeyCode::Char('/') => app.mode = Mode::Filtering,
-                                KeyCode::Up => {
-                                    if !app.messages.is_empty() {
-                                        let i = match app.list_state.selected() {
-                                            Some(i) => i.saturating_sub(1),
-                                            None => 0,
-                                        };
-                                        app.list_state.select(Some(i));
-                                        if app.show_details {
-                                            update_detail_text(&mut app);
-                                        }
-                                    }
-                                }
-                                KeyCode::Down => {
-                                    if !app.messages.is_empty() {
-                                        let i = match app.list_state.selected() {
-                                            Some(i) => (i + 1).min(app.messages.len() - 1),
-                                            None => 0,
-                                        };
-                                        app.list_state.select(Some(i));
-                                        if app.show_details {
-                                            update_detail_text(&mut app);
-                                        }
-                                    }
-                                }
-                                KeyCode::Char('s') | KeyCode::Char(' ') => {
-                                    if app.show_details {
-                                        app.show_details = false;
-                                    } else {
-                                        update_detail_text(&mut app);
-                                        app.show_details = true;
-                                    }
-                                }
-                                KeyCode::Esc => {
-                                    if app.show_details {
-                                        app.show_details = false;
-                                    }
-                                }
-                                KeyCode::Char('c') => {
-                                    if app.show_details {
-                                        let text_to_copy = app.detail_text.clone();
-                                        let file_path = "/tmp/d-buddy-details.txt";
-                                        let file_write_status = match fs::write(file_path, text_to_copy.as_bytes()).await {
+                            }
+                            KeyCode::Char('c') => {
+                                if app.show_details {
+                                    let text_to_copy = app.detail_text.clone();
+                                    let file_path = "/tmp/d-buddy-details.txt";
+                                    let file_write_status =
+                                        match fs::write(file_path, text_to_copy.as_bytes()).await {
                                             Ok(_) => format!("Saved to {}", file_path),
                                             Err(e) => format!("Failed to save to file: {}", e),
                                         };
-                                        let clipboard_status = match clipboard.set_text(text_to_copy) {
-                                            Ok(_) => {
-                                                sleep(Duration::from_millis(100));
-                                                "Copied to clipboard!".to_string()
-                                            },
-                                            Err(e) => format!("Copy failed: {}", e),
-                                        };
-                                        app.status_message = format!("{} | {}", file_write_status, clipboard_status);
-                                    }
+                                    let clipboard_status = match clipboard.set_text(text_to_copy) {
+                                        Ok(_) => {
+                                            sleep(Duration::from_millis(100));
+                                            "Copied to clipboard!".to_string()
+                                        }
+                                        Err(e) => format!("Copy failed: {}", e),
+                                    };
+                                    app.status_message =
+                                        format!("{} | {}", file_write_status, clipboard_status);
                                 }
-                                KeyCode::Char('j') => {
-                                    if app.show_details {
-                                        app.detail_scroll = app.detail_scroll.saturating_add(1);
-                                    }
-                                }
-                                KeyCode::Char('k') => {
-                                    if app.show_details {
-                                        app.detail_scroll = app.detail_scroll.saturating_sub(1);
-                                    }
-                                }
-                                KeyCode::PageDown => {
-                                    if app.show_details {
-                                        app.detail_scroll = app.detail_scroll.saturating_add(10);
-                                    }
-                                }
-                                KeyCode::PageUp => {
-                                    if app.show_details {
-                                        app.detail_scroll = app.detail_scroll.saturating_sub(10);
-                                    }
-                                }
-                                _ => {}
                             }
+                            KeyCode::Char('j') => {
+                                if app.show_details {
+                                    app.detail_scroll = app.detail_scroll.saturating_add(1);
+                                }
+                            }
+                            KeyCode::Char('k') => {
+                                if app.show_details {
+                                    app.detail_scroll = app.detail_scroll.saturating_sub(1);
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                if app.show_details {
+                                    app.detail_scroll = app.detail_scroll.saturating_add(10);
+                                }
+                            }
+                            KeyCode::PageUp => {
+                                if app.show_details {
+                                    app.detail_scroll = app.detail_scroll.saturating_sub(10);
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    Mode::Filtering => {
-                        if let Event::Key(key) = event {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.mode = Mode::Normal;
-                                }
-                                KeyCode::Esc => {
-                                    app.input.reset();
-                                    app.mode = Mode::Normal;
-                                }
-                                _ => {
-                                    input_backend::to_input_request(&event)
-                                        .and_then(|req| app.input.handle(req));
-                                }
+                }
+                Mode::Filtering => {
+                    if let Event::Key(key) = event {
+                        match key.code {
+                            KeyCode::Enter => {
+                                app.mode = Mode::Normal;
+                            }
+                            KeyCode::Esc => {
+                                app.input.reset();
+                                app.mode = Mode::Normal;
+                            }
+                            _ => {
+                                input_backend::to_input_request(&event)
+                                    .and_then(|req| app.input.handle(req));
                             }
                         }
                     }
@@ -294,26 +290,31 @@ async fn run(
 }
 
 /// A helper function to generate the detail text for the currently selected message.
-fn update_detail_text(app: &mut App) {
+async fn update_detail_text(app: &mut App<'_>) {
     if let Some(selected) = app.list_state.selected() {
-        if let Some(message) = app.messages.get(selected) {
-            let body = message.body();
-            let body_sig = body.signature();
+        let messages = app.messages.get(&app.stream).unwrap().lock().await;
+        if let Some(item) = messages.get(selected) {
+            if let Some(message) = &item.message {
+                let body = message.body();
+                let body_sig = body.signature();
 
-            app.detail_text = if body_sig.to_string().is_empty() {
-                "[No message body]".to_string()
+                app.detail_text = if body_sig.to_string().is_empty() {
+                    "[No message body]".to_string()
+                } else {
+                    match body.deserialize::<Structure>() {
+                        Ok(structure) => ui::format_value(&Value::from(structure)),
+                        Err(_) => match body.deserialize::<Value>() {
+                            Ok(value) => ui::format_value(&value),
+                            Err(e) => format!(
+                                "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
+                                body_sig, e
+                            ),
+                        },
+                    }
+                };
             } else {
-                match body.deserialize::<Structure>() {
-                    Ok(structure) => ui::format_value(&Value::from(structure)),
-                    Err(_) => match body.deserialize::<Value>() {
-                        Ok(value) => ui::format_value(&value),
-                        Err(e) => format!(
-                            "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
-                            body_sig, e
-                        ),
-                    },
-                }
-            };
+                app.detail_text = "[No message body]".to_string();
+            }
             app.detail_scroll = 0;
         }
     }
