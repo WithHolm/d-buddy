@@ -390,7 +390,22 @@ async fn run<'a>(
                                     }
                                 }
                             }
-                            KeyCode::Char('g') => app.mode = Mode::GroupingSelection,
+                            KeyCode::Char('g') => {
+                                app.mode = Mode::GroupingSelection;
+                                let grouping_options = [
+                                    bus::GroupingType::Sender,
+                                    bus::GroupingType::Member,
+                                    bus::GroupingType::Path,
+                                    bus::GroupingType::Serial,
+                                    bus::GroupingType::None,
+                                ];
+                                let initial_selection_index = grouping_options
+                                    .iter()
+                                    .position(|&gt| gt == app.grouping_type)
+                                    .unwrap_or(0); // Default to Sender if current type not found
+                                app.grouping_selection_state
+                                    .select(Some(initial_selection_index));
+                            }
                             KeyCode::Char('f') => app.mode = Mode::Filtering,
                             KeyCode::Up => {
                                 if !app.list_items.is_empty() {
@@ -552,15 +567,6 @@ async fn run<'a>(
                         bus::GroupingType::Serial,
                         bus::GroupingType::None,
                     ];
-                    // Ensure a selection is made when entering the mode
-                    if app.grouping_selection_state.selected().is_none() {
-                        let initial_selection_index = grouping_options
-                            .iter()
-                            .position(|&gt| gt == app.grouping_type)
-                            .unwrap_or(0); // Default to Sender if current type not found
-                        app.grouping_selection_state
-                            .select(Some(initial_selection_index));
-                    }
 
                     if let Event::Key(key) = event {
                         match key.code {

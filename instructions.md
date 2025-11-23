@@ -67,9 +67,22 @@ This plan outlines the next steps to integrate the new architecture and build ou
    - [x] details pane: remove the --- Header --- and header info below it
 - [x] currently you can scroll past the bottom of details view. make sure to disable scroll down or up if the bottom/top is reached.
 - [] add serial to listview between timestamp and sender, reply_serial if is_reply  
-- [] filtering should pop up as a text input field in the middle of screen. 
-   - [] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter
-- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
+- [x] filtering should pop up as a text input field in the middle of screen.
+   - [x] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
 ### Grouping
 - [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
  - [x] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
+ - [x] selector is not active by default in group selection view. please make it always active.
+
+### Filtering 
+- [] filtering should pop up as a text input field in the middle of screen, one line high. 
+   - [] keymap should be in same place it is in main view (at the bottom)
+- [] if autofilter is activated, a new popup should take its place with the selection you can make and example of value it would use:
+  - [] sender: "sender"
+  - [] member: "member"
+  - [] path: "path"
+  - [] serial: "serial"
+  - [] reply_serial: "reply_serial"
+- [] remove autofilter from main view. only available in filter view
+### colouring and config:
+- [] all colouring should be accessible via a shared struct. this struct should have a color scheme for the app for easier implementation.
