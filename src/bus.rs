@@ -59,6 +59,18 @@ impl Default for GroupingType {
     }
 }
 
+impl std::fmt::Display for GroupingType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GroupingType::Sender => write!(f, "Sender"),
+            GroupingType::Member => write!(f, "Member"),
+            GroupingType::Path => write!(f, "Path"),
+            GroupingType::Serial => write!(f, "Serial"),
+            GroupingType::None => write!(f, "None"),
+        }
+    }
+}
+
 // creates a new dbus listener for the given but type. returns a lis
 pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
     let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));

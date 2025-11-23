@@ -3,7 +3,7 @@ use crate::bus::BusType;
 use ratatui::{
     prelude::*,
     text::{Line, Text},
-    widgets::{Block, Borders, Clear, List, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap},
 };
 use zbus::zvariant::Value;
 
@@ -110,8 +110,15 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     // In the bottom chunk, render either the filter input box or the keybindings help text
     match app.mode {
         Mode::Filtering => {
-            // Calculate width for the input box and scrolling
-            let width = chunks[1].width.max(3) - 3;
+            let area = centered_rect(80, 20, frame.area());
+            let block = Block::default().title("Filter").borders(Borders::ALL);
+            frame.render_widget(Clear, area);
+            frame.render_widget(&block, area);
+
+            let inner_area = block.inner(area);
+
+            // Calculate width for the input box and scrolling within the popup
+            let width = inner_area.width.max(3) - 3;
             let scroll = app.input.visual_scroll(width as usize);
 
             let mut filter_display_text = String::new();
@@ -126,10 +133,31 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             filter_display_text.push_str(app.input.value());
 
             // Create a Paragraph widget for the input text
-            let input = Paragraph::new(filter_display_text)
-                .scroll((0, scroll as u16)) // Handle scrolling of input text
-                .block(Block::default().borders(Borders::ALL).title("Filter")); // Add border and title
-            frame.render_widget(input, chunks[1]); // Render the input box in the bottom chunk
+            let input = Paragraph::new(filter_display_text).scroll((0, scroll as u16)); // Handle scrolling of input text
+
+            // Add keymap hints below the input field in the popup
+            let key_hints = Line::from(vec![
+                "Esc".bold().cyan(),
+                ": clear | ".into(),
+                "Enter".bold().cyan(),
+                ": apply | ".into(),
+                "Tab".bold().cyan(),
+                ": autofilter".into(),
+            ]);
+            let key_hints_paragraph = Paragraph::new(key_hints)
+                .alignment(Alignment::Center)
+                .block(Block::default().padding(Padding::vertical(1))); // Add padding
+
+            let help_text_constraints = [
+                Constraint::Length(inner_area.height.saturating_sub(3)), // Input area
+                Constraint::Length(3),                                   // Key hints area
+            ];
+            let chunks_for_help_text = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(help_text_constraints)
+                .split(inner_area);
+            frame.render_widget(&input, chunks_for_help_text[0]);
+            frame.render_widget(key_hints_paragraph, chunks_for_help_text[1]);
         }
         Mode::Normal => {
             let help_text = if !app.status_message.is_empty() {
@@ -220,19 +248,44 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
 
             let inner_area = block.inner(area);
 
-            let options = vec![
-                Line::from(vec!["s".bold().cyan(), ": Sender".into()]),
-                Line::from(vec!["m".bold().cyan(), ": Member".into()]),
-                Line::from(vec!["p".bold().cyan(), ": Path".into()]),
-                Line::from(vec!["i".bold().cyan(), ": Serial".into()]),
-                Line::from(vec!["n".bold().cyan(), ": None".into()]),
-                Line::from(vec!["Esc".bold().cyan(), ": Cancel".into()]),
-            ];
-            let list = List::new(options)
-                .block(Block::default())
-                .highlight_style(Style::default().bg(Color::DarkGray));
+            let grouping_options = ["Sender", "Member", "Path", "Serial", "None"];
+            let list_items: Vec<ListItem> = grouping_options
+                .iter()
+                .enumerate()
+                .map(|(i, &option)| {
+                    let mut spans = vec![];
+                    // Add a small indicator for the current grouping type
+                    if app.grouping_type.to_string() == option {
+                        spans.push(Span::styled("● ", Style::default().fg(Color::LightGreen)));
+                    } else {
+                        spans.push(Span::raw("  "));
+                    }
+                    spans.push(Span::raw(format!(
+                        "{}: {}",
+                        match i {
+                            0 => "s",
+                            1 => "m",
+                            2 => "p",
+                            3 => "i",
+                            4 => "n",
+                            _ => "",
+                        },
+                        option
+                    )));
+                    ListItem::new(Line::from(spans))
+                })
+                .collect();
 
-            frame.render_widget(list, inner_area);
+            let list = List::new(list_items)
+                .block(Block::default())
+                .highlight_symbol("> ")
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Cyan),
+                );
+
+            frame.render_stateful_widget(list, inner_area, &mut app.grouping_selection_state);
         }
     }
 }

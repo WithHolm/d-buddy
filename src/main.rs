@@ -76,6 +76,7 @@ struct App<'a> {
     detail_scroll_request: Option<i32>,
     filter_criteria: HashMap<String, String>,
     grouping_type: bus::GroupingType,
+    grouping_selection_state: ListState,
 }
 
 // Default implementation for the App struct
@@ -97,6 +98,7 @@ impl Default for App<'_> {
             detail_scroll_request: None,
             filter_criteria: HashMap::new(),
             grouping_type: bus::GroupingType::default(),
+            grouping_selection_state: ListState::default(),
         }
     }
 }
@@ -254,7 +256,12 @@ async fn run<'a>(
                         bus::GroupingType::Member => item.member.clone(),
                         bus::GroupingType::Path => item.path.clone(),
                         bus::GroupingType::Serial => item.serial.clone(),
-                        bus::GroupingType::None => item.timestamp.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs().to_string(), // Use timestamp as a unique key for "None"
+                        bus::GroupingType::None => item
+                            .timestamp
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                            .to_string(), // Use timestamp as a unique key for "None"
                     };
 
                     let indent = if last_group_key.as_ref() == Some(&current_group_key)
@@ -519,6 +526,12 @@ async fn run<'a>(
                                 }
                                 app.mode = Mode::Normal;
                             }
+                            KeyCode::Tab => {
+                                // If there's a selected item, go to AutoFilterSelection mode
+                                if app.list_state.selected().is_some() {
+                                    app.mode = Mode::AutoFilterSelection;
+                                }
+                            }
                             KeyCode::Esc => {
                                 app.input.reset();
                                 app.filter_criteria.clear(); // Clear all field filters
@@ -532,29 +545,50 @@ async fn run<'a>(
                     }
                 }
                 Mode::GroupingSelection => {
+                    let grouping_options = [
+                        bus::GroupingType::Sender,
+                        bus::GroupingType::Member,
+                        bus::GroupingType::Path,
+                        bus::GroupingType::Serial,
+                        bus::GroupingType::None,
+                    ];
+                    // Ensure a selection is made when entering the mode
+                    if app.grouping_selection_state.selected().is_none() {
+                        let initial_selection_index = grouping_options
+                            .iter()
+                            .position(|&gt| gt == app.grouping_type)
+                            .unwrap_or(0); // Default to Sender if current type not found
+                        app.grouping_selection_state
+                            .select(Some(initial_selection_index));
+                    }
+
                     if let Event::Key(key) = event {
                         match key.code {
-                            KeyCode::Char('s') => {
-                                app.grouping_type = bus::GroupingType::Sender;
-                                app.mode = Mode::Normal;
+                            KeyCode::Up => {
+                                let i = match app.grouping_selection_state.selected() {
+                                    Some(i) => i.saturating_sub(1),
+                                    None => 0,
+                                };
+                                app.grouping_selection_state.select(Some(i));
                             }
-                            KeyCode::Char('m') => {
-                                app.grouping_type = bus::GroupingType::Member;
-                                app.mode = Mode::Normal;
+                            KeyCode::Down => {
+                                let i = match app.grouping_selection_state.selected() {
+                                    Some(i) => (i + 1).min(grouping_options.len() - 1),
+                                    None => 0,
+                                };
+                                app.grouping_selection_state.select(Some(i));
                             }
-                            KeyCode::Char('p') => {
-                                app.grouping_type = bus::GroupingType::Path;
-                                app.mode = Mode::Normal;
-                            }
-                            KeyCode::Char('i') => {
-                                app.grouping_type = bus::GroupingType::Serial; // Changed from 'r' to 'i' to avoid conflict with reply
-                                app.mode = Mode::Normal;
-                            }
-                            KeyCode::Char('n') => {
-                                app.grouping_type = bus::GroupingType::None;
-                                app.mode = Mode::Normal;
+                            KeyCode::Enter => {
+                                if let Some(selected_index) =
+                                    app.grouping_selection_state.selected()
+                                {
+                                    app.grouping_type = grouping_options[selected_index];
+                                    app.grouping_selection_state.select(None); // Clear selection
+                                    app.mode = Mode::Normal;
+                                }
                             }
                             KeyCode::Esc => {
+                                app.grouping_selection_state.select(None); // Clear selection
                                 app.mode = Mode::Normal;
                             }
                             _ => {}

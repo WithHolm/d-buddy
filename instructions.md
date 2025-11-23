@@ -72,4 +72,4 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
 ### Grouping
 - [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
- - [] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
+ - [x] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
