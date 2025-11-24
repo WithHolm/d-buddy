@@ -69,6 +69,7 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [] add serial to listview between timestamp and sender, reply_serial if is_reply  
 - [x] filtering should pop up as a text input field in the middle of screen.
    - [x] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
+- [] add total count of messages at top of listview (example [session(10)|system(20)|both(30)])
 ### Grouping
 - [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
  - [x] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
@@ -89,3 +90,12 @@ This plan outlines the next steps to integrate the new architecture and build ou
 
 ### Messages
 - [] is seemes like recipient and reply_serial is not a property that is captured properly. the message item in bus has this and it seemes like it should have some value, but all testing has shown that it is not captured properly.
+
+### Optionals
+- Option to toggle relative times (e.g., “2s ago”) which can help see event bursts more clearly.
+- Support hierarchical grouping (e.g., first by sender, then by member).
+- Expand/collapse groups and show message counts to manage high-volume streams.
+- allow full-text search inside message arguments or property values.
+  - Highlight matches in the message details view for easier spotting.
+- dump messages to a file + load messages from a file (just active.. if you have a filter, just dump the ones shown, or mabye have a selector at that point..)
+- lighting ticker besides messages. goes from bright to dark depending on the time (60 sec)

@@ -261,8 +261,6 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
                     ": filter | ".into(),
                     "g".bold().fg(config.color_keybind_key),
                     ": group | ".into(),
-                    "a".bold().fg(config.color_keybind_key),
-                    ": autofilter | ".into(),
                     "r".bold().fg(config.color_keybind_key),
                     ": reply | ".into(),
                     "x".bold().fg(config.color_keybind_key),

@@ -93,7 +93,7 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
     proxy
         .add_match_rule(
             zbus::MatchRule::builder()
-                .msg_type(zbus::message::Type::Signal)
+                // .msg_type(zbus::message::Type::Signal)
                 .build(),
         )
         .await?;

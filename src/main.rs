@@ -34,6 +34,7 @@ struct Args {
     check: bool,
 }
 
+// color config
 pub struct Config {
     pub color_dict: Color,
     pub color_struct: Color,
