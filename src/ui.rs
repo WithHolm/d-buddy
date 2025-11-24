@@ -1,5 +1,5 @@
 use super::{App, Config, Mode};
-use crate::bus::BusType;
+use crate::bus::{BusType, GroupingType};
 use ratatui::{
     prelude::*,
     text::{Line, Text},
@@ -17,7 +17,7 @@ pub fn ui<'a>(
     both_count: usize,
 ) {
     if frame.area().width < app.min_width || frame.area().height < app.min_height {
-        let message = "Console is too small to display the application";
+        let message = "Console is too small to display the application (q to quit)";
         let paragraph = Paragraph::new(message)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
@@ -86,15 +86,33 @@ pub fn ui<'a>(
 
     // Render Filtering popup as an overlay if in Mode::Filtering
     if let Mode::Filtering = app.mode {
-        let area = centered_rect(80, 7, frame.area()); // Use frame.size() for full screen relative centering
+        let percent_x = 80;
+        let r = frame.area();
+
+        let popup_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0), // Center vertically
+                Constraint::Length(3),
+                Constraint::Min(0),
+            ])
+            .split(r);
+
+        let area = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ])
+            .split(popup_layout[1])[1];
+
         let block = Block::default().title("Filter").borders(Borders::ALL);
         frame.render_widget(Clear, area);
         frame.render_widget(&block, area);
-
         let inner_area = block.inner(area);
 
-        // Calculate width for the input box and scrolling within the popup
-        let width = inner_area.width.max(3) - 3;
+        let width = inner_area.width.max(3);
         let scroll = app.input.visual_scroll(width as usize);
 
         let mut filter_display_text = String::new();
@@ -108,38 +126,8 @@ pub fn ui<'a>(
         }
         filter_display_text.push_str(app.input.value());
 
-        // Create a Paragraph widget for the input text, now always single line
         let input = Paragraph::new(filter_display_text).scroll((0, scroll as u16));
-        frame.render_widget(&input, inner_area);
-    }
-
-    // Render Filtering popup as an overlay if in Mode::Filtering
-    if let Mode::Filtering = app.mode {
-        let area = centered_rect(80, 7, frame.area()); // Use frame.size() for full screen relative centering
-        let block = Block::default().title("Filter").borders(Borders::ALL);
-        frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
-
-        let inner_area = block.inner(area);
-
-        // Calculate width for the input box and scrolling within the popup
-        let width = inner_area.width.max(3) - 3;
-        let scroll = app.input.visual_scroll(width as usize);
-
-        let mut filter_display_text = String::new();
-        if !app.filter_criteria.is_empty() {
-            let criteria_vec: Vec<String> = app
-                .filter_criteria
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
-            filter_display_text.push_str(&format!("[{}] ", criteria_vec.join(", ")));
-        }
-        filter_display_text.push_str(app.input.value());
-
-        // Create a Paragraph widget for the input text, now always single line
-        let input = Paragraph::new(filter_display_text).scroll((0, scroll as u16));
-        frame.render_widget(&input, inner_area);
+        frame.render_widget(input, inner_area);
     }
 
     // Render AutoFilterSelection popup as an overlay if in Mode::AutoFilterSelection
@@ -274,6 +262,8 @@ pub fn ui<'a>(
                     ": quit | ".into(),
                     "Tab".bold().fg(config.color_keybind_key),
                     ": view | ".into(),
+                    "t".bold().fg(config.color_keybind_key),
+                    ": time | ".into(),
                     "f".bold().fg(config.color_keybind_key),
                     ": filter | ".into(),
                     "g".bold().fg(config.color_keybind_key),
@@ -326,9 +316,20 @@ pub fn ui<'a>(
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
-            let grouping_options = ["Sender", "Member", "Path", "Serial", "None"];
-            let popup_height = (grouping_options.len() + 2) as u16;
-            let popup_width = 30;
+            let all_grouping_options = [
+                crate::bus::GroupingType::Sender,
+                crate::bus::GroupingType::Member,
+                crate::bus::GroupingType::Path,
+                crate::bus::GroupingType::Serial,
+                crate::bus::GroupingType::None,
+            ];
+            let list_display_options: Vec<String> = all_grouping_options
+                .iter()
+                .map(|gt| gt.to_string())
+                .collect();
+
+            let popup_height = (list_display_options.len() + 2) as u16; // 2 for borders
+            let popup_width = 30; // Static width as requested
 
             let area = {
                 let vertical_padding = (frame.area().height.saturating_sub(popup_height)) / 2;
@@ -365,12 +366,14 @@ pub fn ui<'a>(
 
             let inner_area = block.inner(area);
 
-            let list_items: Vec<ListItem> = grouping_options
+            let list_items: Vec<ListItem> = list_display_options
                 .iter()
-                .map(|&option| {
+                .enumerate()
+                .map(|(i, option_str)| {
+                    let grouping_type = all_grouping_options[i];
                     let mut spans = vec![];
-                    // Add a small indicator for the current grouping type
-                    if app.grouping_type.to_string() == option {
+
+                    if app.grouping_keys.contains(&grouping_type) {
                         spans.push(Span::styled(
                             "● ",
                             Style::default().fg(config.color_grouping_active_indicator),
@@ -378,7 +381,7 @@ pub fn ui<'a>(
                     } else {
                         spans.push(Span::raw("  "));
                     }
-                    spans.push(Span::raw(option));
+                    spans.push(Span::raw(option_str.clone()));
                     ListItem::new(Line::from(spans))
                 })
                 .collect();

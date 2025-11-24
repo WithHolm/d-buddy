@@ -1,29 +1,30 @@
 mod bus;
+mod config;
+mod event;
+mod state;
 mod ui;
+
+use config::Config;
+use state::{App, Mode};
 
 // Import necessary crates and modules
 use anyhow::Result; // For simplified error handling
 use arboard::Clipboard; // For clipboard access
 use chrono::{DateTime, Local};
+
 use clap::Parser;
-use crossterm::event::{Event, EventStream, KeyCode}; // For handling terminal events like key presses
+use crossterm::event::EventStream;
 use futures::stream::StreamExt; // For extending stream functionality, used with zbus MessageStream
 use ratatui::prelude::*;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{ListItem, ListState};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::SystemTime;
+use ratatui::widgets::ListItem;
+
 // UI widgets
-use bus::{BusType, Item};
+use bus::{BusType, Item, GroupingType};
 use std::{
     io::{self, stdout},
-    thread::sleep,
     time::Duration,
-}; // Standard I/O for terminal operations
-use tokio::fs; // Asynchronous multi-producer, single-consumer channel for message passing
-use tui_input::{backend::crossterm as input_backend, Input}; // For handling text input in the TUI
-use zbus::zvariant::{Structure, Value};
+};
 
 /// A simple TUI for browsing D-Bus messages.
 #[derive(Parser, Debug)]
@@ -32,118 +33,6 @@ struct Args {
     /// Run in check mode without launching the TUI
     #[arg(long)]
     check: bool,
-}
-
-// color config
-pub struct Config {
-    pub color_dict: Color,
-    pub color_struct: Color,
-    pub color_default_stripe: Color,
-    pub color_timestamp_normal: Color,
-    pub color_timestamp_details: Color,
-    pub color_stream_session: Color,
-    pub color_stream_system: Color,
-    pub color_sender_normal: Color,
-    pub color_sender_details: Color,
-    pub color_member_normal: Color,
-    pub color_member_details: Color,
-    pub color_path_normal: Color,
-    pub color_path_details: Color,
-    pub color_status_message: Color,
-    pub color_keybind_text: Color,
-    pub color_keybind_key: Color,
-    pub color_thread_serial: Color,
-    pub color_grouping_active_indicator: Color,
-    pub color_selection_highlight_bg: Color,
-    pub color_selection_highlight_fg: Color,
-    pub color_autofilter_value: Color,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            color_dict: Color::Rgb(20, 20, 40),   // Dark Blue
-            color_struct: Color::Rgb(40, 20, 40), // Dark Magenta
-            color_default_stripe: Color::DarkGray,
-            color_timestamp_normal: Color::Yellow,
-            color_timestamp_details: Color::White,
-            color_stream_session: Color::Cyan,
-            color_stream_system: Color::LightMagenta,
-            color_sender_normal: Color::Green,
-            color_sender_details: Color::White,
-            color_member_normal: Color::Blue,
-            color_member_details: Color::White,
-            color_path_normal: Color::Magenta,
-            color_path_details: Color::White,
-            color_status_message: Color::Yellow,
-            color_keybind_text: Color::Reset,
-            color_keybind_key: Color::Cyan,
-            color_thread_serial: Color::LightBlue,
-            color_grouping_active_indicator: Color::LightGreen,
-            color_selection_highlight_bg: Color::DarkGray,
-            color_selection_highlight_fg: Color::Cyan,
-            color_autofilter_value: Color::Green,
-        }
-    }
-}
-
-// Enum to define the current operating mode of the application
-enum Mode {
-    Normal,              // Default mode for browsing D-Bus messages
-    Filtering,           // Mode for entering a filter string
-    AutoFilterSelection, // Mode for selecting autofilter field
-    ThreadView,          // Mode for viewing a specific message thread
-    GroupingSelection,   // Mode for selecting a grouping option
-}
-
-// Main application struct holding all the state
-struct App<'a> {
-    stream: BusType,
-    messages: HashMap<BusType, Arc<tokio::sync::Mutex<Vec<Item>>>>,
-    filtered_and_sorted_items: Vec<Item>,
-    list_items: Vec<ListItem<'a>>,
-    list_state: ListState, // State of the message list widget (e.g., selected item)
-    show_details: bool,    // Flag to indicate if message details popup should be shown
-    mode: Mode,            // Current operating mode (Normal or Filtering)
-    input: Input,          // Input buffer for the filtering text
-    detail_text: Text<'static>, // The formatted string for the currently viewed detail
-    detail_scroll: u16,    // The vertical scroll offset for the detail view
-    status_message: String, // A temporary message to show in the status bar
-    thread_serial: Option<String>,
-    detail_scroll_request: Option<i32>,
-    filter_criteria: HashMap<String, String>,
-    grouping_type: bus::GroupingType,
-    grouping_selection_state: ListState,
-    autofilter_selection_state: ListState,
-    min_width: u16,
-    min_height: u16,
-}
-
-// Default implementation for the App struct
-impl Default for App<'_> {
-    fn default() -> Self {
-        App {
-            stream: BusType::Session,
-            messages: HashMap::new(), // Initialize with an empty list of messages
-            filtered_and_sorted_items: Vec::new(),
-            list_items: Vec::new(),
-            list_state: ListState::default(), // Default list state (no item selected)
-            show_details: false,              // Details popup is hidden by default
-            mode: Mode::Normal,               // Start in Normal mode
-            input: Input::default(),          // Empty input buffer
-            detail_text: Text::default(),     // No detail text initially
-            detail_scroll: 0,                 // Start with no scroll
-            status_message: String::new(),    // No status message initially
-            thread_serial: None,
-            detail_scroll_request: None,
-            filter_criteria: HashMap::new(),
-            grouping_type: bus::GroupingType::default(),
-            grouping_selection_state: ListState::default(),
-            autofilter_selection_state: ListState::default(),
-            min_width: 20,
-            min_height: 20,
-        }
-    }
 }
 
 // Main asynchronous entry point of the application
@@ -194,14 +83,47 @@ fn restore_terminal() -> Result<()> {
     Ok(())
 }
 
+fn get_fading_color(base_color: Color, elapsed_seconds: u64, total_seconds: u64) -> Color {
+    let elapsed_fraction = elapsed_seconds as f32 / total_seconds as f32;
+
+    // Assuming base_color is RGB for interpolation
+
+    if let Color::Rgb(r_base, g_base, b_base) = base_color {
+        // Fade to black (0,0,0) or dark gray
+
+        let r = (r_base as f32 * (1.0 - elapsed_fraction)).max(0.0) as u8;
+
+        let g = (g_base as f32 * (1.0 - elapsed_fraction)).max(0.0) as u8;
+
+        let b = (b_base as f32 * (1.0 - elapsed_fraction)).max(0.0) as u8;
+
+        Color::Rgb(r, g, b)
+    } else {
+        // Fallback for other color types, or if you only use RGB
+
+        if elapsed_fraction < (total_seconds as f32 / 2.0) {
+            // Keep original color for first half
+
+            base_color
+        } else {
+            Color::DarkGray // Fade to dark gray for second half
+        }
+    }
+}
+
 // The main application event loop, now fully asynchronous
+
 async fn run<'a>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+
     app: &mut App<'a>,
+
     config: &Config,
 ) -> Result<()> {
     let mut event_stream = EventStream::new();
+
     let mut clipboard = Clipboard::new().unwrap();
+
     let tick_rate = Duration::from_millis(250);
 
     loop {
@@ -210,31 +132,40 @@ async fn run<'a>(
         } else {
             0
         };
+
         let system_count = if let Some(arc) = app.messages.get(&BusType::System) {
             arc.lock().await.len()
         } else {
             0
         };
+
         let both_count = session_count + system_count;
 
         // Create a scope to ensure the lock is released before drawing
+
         {
             let all_messages = match app.stream {
                 BusType::Session | BusType::System => {
                     app.messages.get(&app.stream).unwrap().lock().await.clone()
                 }
+
                 BusType::Both => {
                     let mut combined_messages: Vec<Item> = Vec::new();
+
                     if let Some(session_arc) = app.messages.get(&BusType::Session) {
                         combined_messages.extend(session_arc.lock().await.iter().cloned());
                     }
+
                     if let Some(system_arc) = app.messages.get(&BusType::System) {
                         combined_messages.extend(system_arc.lock().await.iter().cloned());
                     }
+
                     combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
                     combined_messages
                 }
             };
+
             let filter_text = app.input.value();
 
             app.filtered_and_sorted_items = all_messages
@@ -247,23 +178,33 @@ async fn run<'a>(
                             false
                         }
                     }
+
                     _ => {
                         let mut passes_field_filters = true;
+
                         if !app.filter_criteria.is_empty() {
                             for (field, value) in &app.filter_criteria {
                                 let item_field_value = match field.as_str() {
                                     "sender" => &item.sender,
+
                                     "member" => &item.member,
+
                                     "path" => &item.path,
+
                                     "serial" => &item.serial,
+
                                     "reply_serial" => &item.reply_serial,
+
                                     _ => {
                                         passes_field_filters = false;
+
                                         break;
                                     }
                                 };
+
                                 if !item_field_value.contains(value) {
                                     passes_field_filters = false;
+
                                     break;
                                 }
                             }
@@ -280,58 +221,127 @@ async fn run<'a>(
                 .cloned()
                 .collect();
 
-            app.filtered_and_sorted_items
-                .sort_by(|a, b| match app.grouping_type {
-                    bus::GroupingType::Sender => a
-                        .sender
-                        .cmp(&b.sender)
-                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
-                    bus::GroupingType::Member => a
-                        .member
-                        .cmp(&b.member)
-                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
-                    bus::GroupingType::Path => a
-                        .path
-                        .cmp(&b.path)
-                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
-                    bus::GroupingType::Serial => a
-                        .serial
-                        .cmp(&b.serial)
-                        .then_with(|| a.timestamp.cmp(&b.timestamp)),
-                    bus::GroupingType::None => a.timestamp.cmp(&b.timestamp),
-                });
+            app.filtered_and_sorted_items.sort_by(|a, b| {
+                let mut cmp = std::cmp::Ordering::Equal;
 
-            let mut last_group_key: Option<String> = None;
+                for key in &app.grouping_keys {
+                    cmp = match key {
+                        bus::GroupingType::Sender => a.sender.cmp(&b.sender),
+
+                        bus::GroupingType::Member => a.member.cmp(&b.member),
+
+                        bus::GroupingType::Path => a.path.cmp(&b.path),
+
+                        bus::GroupingType::Serial => a.serial.cmp(&b.serial),
+
+                        bus::GroupingType::None => std::cmp::Ordering::Equal,
+                    };
+
+                    if cmp != std::cmp::Ordering::Equal {
+                        break;
+                    }
+                }
+
+                if cmp == std::cmp::Ordering::Equal {
+                    a.timestamp.cmp(&b.timestamp)
+                } else {
+                    cmp
+                }
+            });
+
+            let mut last_group_keys_composite: Option<String> = None;
+
+            let now = Local::now(); // Get current time once per loop iteration
+
             app.list_items = app
                 .filtered_and_sorted_items
                 .iter()
                 .map(|item| {
-                    let current_group_key = match app.grouping_type {
-                        bus::GroupingType::Sender => item.sender.clone(),
-                        bus::GroupingType::Member => item.member.clone(),
-                        bus::GroupingType::Path => item.path.clone(),
-                        bus::GroupingType::Serial => item.serial.clone(),
-                        bus::GroupingType::None => item
-                            .timestamp
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs()
-                            .to_string(), // Use timestamp as a unique key for "None"
-                    };
+                    let mut current_group_keys_vec = Vec::new();
 
-                    let indent = if last_group_key.as_ref() == Some(&current_group_key)
-                        && app.grouping_type != bus::GroupingType::None
+                    let mut is_grouped = false;
+
+                    for key in &app.grouping_keys {
+                        if key == &bus::GroupingType::None {
+                            continue;
+                        }
+
+                        is_grouped = true;
+
+                        let group_component = match key {
+                            bus::GroupingType::Sender => item.sender.clone(),
+
+                            bus::GroupingType::Member => item.member.clone(),
+
+                            bus::GroupingType::Path => item.path.clone(),
+
+                            bus::GroupingType::Serial => item.serial.clone(),
+
+                            bus::GroupingType::None => unreachable!(), // Handled above
+                        };
+
+                        current_group_keys_vec.push(group_component);
+                    }
+
+                    let current_group_keys_composite = current_group_keys_vec.join("::");
+
+                    let indent = if is_grouped
+                        && last_group_keys_composite.as_ref() == Some(&current_group_keys_composite)
                     {
                         "  "
                     } else {
-                        last_group_key = Some(current_group_key);
+                        last_group_keys_composite = Some(current_group_keys_composite);
+
                         ""
                     };
+
                     let dt: DateTime<Local> = item.timestamp.into();
-                    let timestamp = dt.format("%H:%M:%S%.3f").to_string();
-                    let line = Line::from(vec![
+
+                    let timestamp = if app.use_relative_time {
+                        let duration = now.signed_duration_since(dt).abs(); // Use `now` here
+
+                        if duration.num_seconds() < 60 {
+                            if duration.num_seconds() < 10 {
+                                format!("{}s", duration.num_seconds())
+                            } else {
+                                format!("{}+s", (duration.num_seconds() / 10) * 10)
+                            }
+                        } else if duration.num_minutes() < 60 {
+                            format!("{}m", duration.num_minutes())
+                        } else if duration.num_hours() < 24 {
+                            format!("{}h", duration.num_hours())
+                        } else if duration.num_days() < 365 {
+                            // Assuming 365 days in a year for simplicity
+
+                            format!("{}d", duration.num_days())
+                        } else {
+                            format!("{}y", duration.num_days() / 365) // Rough year calculation
+                        }
+                    } else {
+                        dt.format("%H:%M:%S%.3f").to_string()
+                    };
+
+                    // Ticker logic
+
+                    let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
+
+                    let total_fade_seconds = 60; // 60 seconds to fade
+
+                    let ticker_color = if elapsed_seconds < total_fade_seconds {
+                        get_fading_color(config.color_ticker, elapsed_seconds, total_fade_seconds)
+                    } else {
+                        Color::DarkGray // Fully faded
+                    };
+
+                    let mut ticker_span = Span::raw("");
+                    if app.enable_lighting_strike {
+                        ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
+                    }
+
+                    let mut spans = vec![
                         Span::raw(indent),
-                        Span::raw("["),
+                        ticker_span, // Add ticker before timestamp
+                        Span::raw(" ["),
                         Span::styled(
                             timestamp,
                             if app.show_details {
@@ -342,18 +352,23 @@ async fn run<'a>(
                         ),
                         Span::raw("]"),
                         Span::raw(" "), // Space after timestamp
+                    ];
+
+                    spans.extend(vec![
                         Span::styled(
                             item.serial.clone(),
                             match item.stream_type {
                                 BusType::Session => {
                                     Style::default().fg(config.color_stream_session)
                                 }
+
                                 BusType::System => Style::default().fg(config.color_stream_system),
+
                                 BusType::Both => Style::default().fg(config.color_timestamp_normal), // Default or neutral color for combined view
                             },
                         ),
                         if item.is_reply && !item.reply_serial.is_empty() {
-                            Span::raw(format!("/{}", item.reply_serial)) // Add reply_serial if it's a reply
+                            Span::raw(format!("/ {}", item.reply_serial)) // Add reply_serial if it's a reply
                         } else {
                             Span::raw("")
                         },
@@ -390,11 +405,13 @@ async fn run<'a>(
                             },
                         ),
                     ]);
-                    ListItem::new(line)
+
+                    ListItem::new(Line::from(spans))
                 })
                 .collect();
 
             // BUGFIX: Ensure an item is selected by default if the list is not empty
+
             if app.list_state.selected().is_none() && !app.list_items.is_empty() {
                 app.list_state.select(Some(0));
             }
@@ -405,402 +422,11 @@ async fn run<'a>(
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
         if let Ok(Some(Ok(event))) = event_ready {
-            match app.mode {
-                Mode::Normal => {
-                    if let Event::Key(key) = event {
-                        if !app.status_message.is_empty() {
-                            app.status_message.clear();
-                        }
-
-                        match key.code {
-                            KeyCode::Char('q') => {
-                                if !app.show_details {
-                                    break;
-                                }
-                                app.show_details = false;
-                            }
-                            KeyCode::Tab => {
-                                app.stream = match app.stream {
-                                    BusType::Session => BusType::System,
-                                    BusType::System => BusType::Both,
-                                    BusType::Both => BusType::Session,
-                                };
-                                app.list_state.select(None); // Reset selection
-                            }
-
-                            KeyCode::Char('x') => {
-                                if let Some(selected) = app.list_state.selected() {
-                                    if let Some(item) = app.filtered_and_sorted_items.get(selected)
-                                    {
-                                        app.thread_serial = Some(item.serial.clone());
-                                        app.mode = Mode::ThreadView;
-                                    }
-                                }
-                            }
-                            KeyCode::Char('g') => {
-                                app.mode = Mode::GroupingSelection;
-                                let grouping_options = [
-                                    bus::GroupingType::Sender,
-                                    bus::GroupingType::Member,
-                                    bus::GroupingType::Path,
-                                    bus::GroupingType::Serial,
-                                    bus::GroupingType::None,
-                                ];
-                                let initial_selection_index = grouping_options
-                                    .iter()
-                                    .position(|&gt| gt == app.grouping_type)
-                                    .unwrap_or(0); // Default to Sender if current type not found
-                                app.grouping_selection_state
-                                    .select(Some(initial_selection_index));
-                            }
-                            KeyCode::Char('f') => app.mode = Mode::Filtering,
-                            KeyCode::Up => {
-                                if !app.list_items.is_empty() {
-                                    let i = match app.list_state.selected() {
-                                        Some(i) => i.saturating_sub(1),
-                                        None => 0,
-                                    };
-                                    app.list_state.select(Some(i));
-                                    if app.show_details {
-                                        update_detail_text(app, config);
-                                    }
-                                }
-                            }
-                            KeyCode::Down => {
-                                if !app.list_items.is_empty() {
-                                    let i = match app.list_state.selected() {
-                                        Some(i) => (i + 1).min(app.list_items.len() - 1),
-                                        None => 0,
-                                    };
-                                    app.list_state.select(Some(i));
-                                    if app.show_details {
-                                        update_detail_text(app, config);
-                                    }
-                                }
-                            }
-                            KeyCode::Char('s') | KeyCode::Char(' ') => {
-                                if app.show_details {
-                                    app.show_details = false;
-                                } else {
-                                    update_detail_text(app, config);
-                                    app.show_details = true;
-                                }
-                            }
-                            KeyCode::Esc => {
-                                if app.show_details {
-                                    app.show_details = false;
-                                }
-                            }
-                            KeyCode::Char('r') => {
-                                if let Some(selected) = app.list_state.selected() {
-                                    if let Some(item) = app.filtered_and_sorted_items.get(selected)
-                                    {
-                                        let bus_type = match app.stream {
-                                            BusType::Session => "--session",
-                                            BusType::System => "--system",
-                                            BusType::Both => "--session", // Default
-                                        };
-                                        let command = format!(
-                                            "dbus-send {} --dest={} {} <interface>.<member>",
-                                            bus_type, item.sender, item.path
-                                        );
-                                        match clipboard.set_text(command.clone()) {
-                                            Ok(_) => {
-                                                app.status_message =
-                                                    format!("Copied to clipboard: {}", command);
-                                            }
-                                            Err(e) => {
-                                                app.status_message =
-                                                    format!("Failed to copy to clipboard: {}", e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            KeyCode::Char('c') => {
-                                if app.show_details {
-                                    let text_to_copy_text = app.detail_text.clone();
-                                    let text_to_copy = text_to_copy_text.to_string();
-                                    let file_path = "/tmp/d-buddy-details.txt";
-                                    let file_write_status =
-                                        match fs::write(file_path, text_to_copy.as_bytes()).await {
-                                            Ok(_) => format!("Saved to {}", file_path),
-                                            Err(e) => format!("Failed to save to file: {}", e),
-                                        };
-                                    let clipboard_status = match clipboard.set_text(text_to_copy) {
-                                        Ok(_) => {
-                                            sleep(Duration::from_millis(100));
-                                            "Copied to clipboard!".to_string()
-                                        }
-                                        Err(e) => format!("Copy failed: {}", e),
-                                    };
-                                    app.status_message =
-                                        format!("{} | {}", file_write_status, clipboard_status);
-                                }
-                            }
-                            KeyCode::Char('j') => {
-                                if app.show_details {
-                                    app.detail_scroll_request = Some(1);
-                                }
-                            }
-                            KeyCode::Char('k') => {
-                                if app.show_details {
-                                    app.detail_scroll_request = Some(-1);
-                                }
-                            }
-                            KeyCode::PageDown => {
-                                if app.show_details {
-                                    app.detail_scroll_request = Some(10);
-                                }
-                            }
-                            KeyCode::PageUp => {
-                                if app.show_details {
-                                    app.detail_scroll_request = Some(-10);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Mode::Filtering => {
-                    if let Event::Key(key) = event {
-                        match key.code {
-                            KeyCode::Enter => {
-                                let input_value = app.input.value().to_string();
-                                if input_value.is_empty() {
-                                    // Clear all field filters and general text filter
-                                    app.filter_criteria.clear();
-                                    app.input.reset();
-                                } else if let Some((field, value)) = input_value.split_once('=') {
-                                    if value.is_empty() {
-                                        // Clear a specific field filter
-                                        app.filter_criteria.remove(field);
-                                    } else {
-                                        // Set a specific field filter
-                                        app.filter_criteria
-                                            .insert(field.to_string(), value.to_string());
-                                    }
-                                    app.input.reset(); // Clear input box after applying field filter
-                                } else {
-                                    // Treat as general text filter, clear field filters
-                                    app.filter_criteria.clear();
-                                    // app.input is already set with the general text, no reset here
-                                }
-                                app.mode = Mode::Normal;
-                            }
-                            KeyCode::Tab => {
-                                // If there's a selected item in the main list,
-                                // initialize autofilter_selection_state and enter AutoFilterSelection mode.
-                                if app.list_state.selected().is_some() {
-                                    app.mode = Mode::AutoFilterSelection;
-                                    // Ensure a selection is made when entering the autofilter selection mode
-                                    // Default to the first option (sender)
-                                    app.autofilter_selection_state.select(Some(0));
-                                }
-                            }
-                            KeyCode::Esc => {
-                                app.input.reset();
-                                app.filter_criteria.clear(); // Clear all field filters
-                                app.mode = Mode::Normal;
-                            }
-                            _ => {
-                                input_backend::to_input_request(&event)
-                                    .and_then(|req| app.input.handle(req));
-                            }
-                        }
-                    }
-                }
-                Mode::GroupingSelection => {
-                    let grouping_options = [
-                        bus::GroupingType::Sender,
-                        bus::GroupingType::Member,
-                        bus::GroupingType::Path,
-                        bus::GroupingType::Serial,
-                        bus::GroupingType::None,
-                    ];
-
-                    if let Event::Key(key) = event {
-                        match key.code {
-                            KeyCode::Up => {
-                                let i = match app.grouping_selection_state.selected() {
-                                    Some(i) => i.saturating_sub(1),
-                                    None => 0,
-                                };
-                                app.grouping_selection_state.select(Some(i));
-                            }
-                            KeyCode::Down => {
-                                let i = match app.grouping_selection_state.selected() {
-                                    Some(i) => (i + 1).min(grouping_options.len() - 1),
-                                    None => 0,
-                                };
-                                app.grouping_selection_state.select(Some(i));
-                            }
-                            KeyCode::Enter => {
-                                if let Some(selected_index) =
-                                    app.grouping_selection_state.selected()
-                                {
-                                    app.grouping_type = grouping_options[selected_index];
-                                    app.grouping_selection_state.select(None); // Clear selection
-                                    app.mode = Mode::Normal;
-                                }
-                            }
-                            KeyCode::Esc => {
-                                app.grouping_selection_state.select(None); // Clear selection
-                                app.mode = Mode::Normal;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Mode::AutoFilterSelection => {
-                    let autofilter_options = ["sender", "member", "path", "serial", "reply_serial"];
-                    let max_index = autofilter_options.len() - 1;
-
-                    if let Event::Key(key) = event {
-                        match key.code {
-                            KeyCode::Up => {
-                                let i = match app.autofilter_selection_state.selected() {
-                                    Some(i) => i.saturating_sub(1),
-                                    None => 0,
-                                };
-                                app.autofilter_selection_state.select(Some(i));
-                            }
-                            KeyCode::Down => {
-                                let i = match app.autofilter_selection_state.selected() {
-                                    Some(i) => (i + 1).min(max_index),
-                                    None => 0,
-                                };
-                                app.autofilter_selection_state.select(Some(i));
-                            }
-                            KeyCode::Enter => {
-                                if let Some(selected_option_index) =
-                                    app.autofilter_selection_state.selected()
-                                {
-                                    if let Some(selected_message_index) = app.list_state.selected()
-                                    {
-                                        if let Some(item) = app
-                                            .filtered_and_sorted_items
-                                            .get(selected_message_index)
-                                        {
-                                            let field_name =
-                                                autofilter_options[selected_option_index];
-                                            let field_value = match field_name {
-                                                "sender" => item.sender.as_str(),
-                                                "member" => item.member.as_str(),
-                                                "path" => item.path.as_str(),
-                                                "serial" => item.serial.as_str(),
-                                                "reply_serial" => item.reply_serial.as_str(),
-                                                _ => "", // Should not happen
-                                            };
-                                            app.input = Input::from(format!(
-                                                "{}={}",
-                                                field_name, field_value
-                                            ));
-                                        }
-                                    }
-                                }
-                                app.autofilter_selection_state.select(None); // Clear selection
-                                app.mode = Mode::Filtering; // Go back to filtering input
-                            }
-                            KeyCode::Esc => {
-                                app.autofilter_selection_state.select(None); // Clear selection
-                                app.mode = Mode::Filtering; // Go back to filtering input
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Mode::ThreadView => {
-                    if let Event::Key(key) = event {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.thread_serial = None;
-                                app.mode = Mode::Normal;
-                            }
-                            _ => {} // Ignore other keys for now
-                        }
-                    }
-                }
+            if event::handle_event(app, config, event, &mut clipboard).await? {
+                break;
             }
         }
     }
+
     Ok(())
-}
-
-/// A helper function to generate the detail text for the currently selected message.
-fn update_detail_text(app: &mut App<'_>, config: &Config) {
-    if let Some(selected) = app.list_state.selected() {
-        if let Some(item) = app.filtered_and_sorted_items.get(selected) {
-            let mut header_lines: Vec<Line> = Vec::new();
-
-            let recipient_info = if item.receiver.is_empty() {
-                Span::raw("")
-            } else {
-                Span::raw(format!(" -> {}", item.receiver))
-            };
-            let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
-                Span::raw(format!("->{}", item.reply_serial))
-            } else {
-                Span::raw("")
-            };
-
-            header_lines.push(Line::from(vec![
-                Span::styled(
-                    item.sender.clone(),
-                    Style::default().fg(config.color_sender_normal),
-                ),
-                recipient_info,
-                Span::raw("|"),
-                Span::styled(
-                    item.serial.clone(),
-                    match item.stream_type {
-                        BusType::Session => Style::default().fg(config.color_stream_session),
-                        BusType::System => Style::default().fg(config.color_stream_system),
-                        BusType::Both => Style::default().fg(config.color_timestamp_normal), // Fallback
-                    },
-                ),
-                reply_serial_info,
-                Span::raw("|"),
-                Span::styled(
-                    item.member.clone(),
-                    Style::default().fg(config.color_member_normal),
-                ),
-                Span::raw(":"),
-                Span::styled(
-                    item.path.clone(),
-                    Style::default().fg(config.color_path_normal),
-                ),
-            ]));
-            header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
-
-            let detail_text = if let Some(message) = &item.message {
-                let body = message.body();
-                let body_sig = body.signature();
-
-                if body_sig.to_string().is_empty() {
-                    Text::from("[No message body]")
-                } else {
-                    match body.deserialize::<Structure>() {
-                        Ok(structure) => ui::format_value(&Value::from(structure), config),
-                        Err(_) => match body.deserialize::<Value>() {
-                            Ok(value) => ui::format_value(&value, config),
-                            Err(e) => Text::from(format!(
-                                "Failed to deserialize body.\n\nSignature: {}\nError: {:#?}",
-                                body_sig, e
-                            )),
-                        },
-                    }
-                }
-            } else {
-                Text::from("[No message body]")
-            };
-
-            // Prepend header to detail_text
-            let mut header_text = Text::from(header_lines);
-            header_text.extend(detail_text); // Extend appends lines from one Text to another
-            app.detail_text = header_text;
-
-            app.detail_scroll = 0;
-        }
-    }
 }

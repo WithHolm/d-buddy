@@ -78,8 +78,9 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
  - [x] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
  - [x] selector is not active by default in group selection view. please make it always active.
-- [] the size of the box where you select grouping is currently relative to console/application height and width. this needs to be static based upon grouping size, so the box is just as high as there are items in the list.
-- [] a selecatble item in the grouping selection box looks like this currently ">   m: Member" can you change this to only be "> Member" ?
+- [x] the size of the box where you select grouping is currently relative to console/application height and width. this needs to be static based upon grouping size, so the box is just as high as there are items in the list.
+- [x] a selecatble item in the grouping selection box looks like this currently ">   m: Member" can you change this to only be "> Member" ?
+- [x] first time group selection box spawns it spawns without selector. if i activate it by pressing don/up, i will spawn the selector for future selections. please fix it so selector is always active
 
 ### Filtering 
 - [x] filtering should pop up as a text input field in the middle of screen, one line high. 
@@ -91,17 +92,25 @@ This plan outlines the next steps to integrate the new architecture and build ou
   - [x] serial: "serial"
   - [x] reply_serial: "reply_serial"
 - [x] remove autofilter from main view. only available in filter view
+- [x] filter is not a satatic height box, make it one. (3 rows - top line with 'filter', middle with input box, bottom line)
+
 ### colouring and config:
 - [x] all colouring should be accessible via a shared struct. this struct should have a color scheme for the app for easier implementation.
 
 ### Messages
 - [x] is seemes like recipient and reply_serial is not a property that is captured properly. the message item in bus has this and it seemes like it should have some value, but all testing has shown that it is not captured properly.
 
+### architecture
+- [x] refactor the code to use a more modular architecture. this will make it easier to add new features and improve performance. info in docs/arcitecutre.md under modularisation
+
 ### Optionals
-- Option to toggle relative times (e.g., “2s ago”) which can help see event bursts more clearly.
-- Support hierarchical grouping (e.g., first by sender, then by member).
-- Expand/collapse groups and show message counts to manage high-volume streams.
-- allow full-text search inside message arguments or property values.
-  - Highlight matches in the message details view for easier spotting.
-- dump messages to a file + load messages from a file (just active.. if you have a filter, just dump the ones shown, or mabye have a selector at that point..)
-- lighting ticker besides messages. goes from bright to dark depending on the time (60 sec)
+- [x] Option to toggle relative times (e.g., “2s ago”) which can help see event bursts more clearly.
+ - [x] Option to toggle relative times (e.g., “0s” -> “59s” -> “1m” -> “59m” -> “1h” ->...) which can help see event bursts more clearly.
+- [] Support hierarchical grouping (e.g., first by sender, then by member).
+- [] Expand/collapse groups and show message counts to manage high-volume streams.
+- [] allow full-text search inside message arguments or property values.
+  - [] Highlight matches in the message details view for easier spotting.
+- [] dump messages to a file + load messages from a file (just active.. if you have a filter, just dump the ones shown, or mabye have a selector at that point..)
+- [x] "lighting strike" ticker besides messages. goes from bright to dark depending on the time (60 sec)
+- [] look up the actual application path + pid sending the message. in detaisl we can show full path + any arguments if present, but in list view we only need to show "{appname} (pid)"
+- [x] revisit application setup, document in /docs about current setup and possible improvements (including new code files to be better organized or alterntiative architecture (keep it high level))

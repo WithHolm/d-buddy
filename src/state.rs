@@ -1,0 +1,73 @@
+use crate::bus::{BusType, Item, GroupingType};
+use ratatui::{
+    text::Text,
+    widgets::{ListItem, ListState},
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tui_input::Input;
+
+// Enum to define the current operating mode of the application
+#[derive(PartialEq)]
+pub enum Mode {
+    Normal,              // Default mode for browsing D-Bus messages
+    Filtering,           // Mode for entering a filter string
+    AutoFilterSelection, // Mode for selecting autofilter field
+    ThreadView,          // Mode for viewing a specific message thread
+    GroupingSelection,   // Mode for selecting a grouping option
+}
+
+// Main application struct holding all the state
+pub struct App<'a> {
+    pub stream: BusType,
+    pub messages: HashMap<BusType, Arc<Mutex<Vec<Item>>>>,
+    pub filtered_and_sorted_items: Vec<Item>,
+    pub list_items: Vec<ListItem<'a>>,
+    pub list_state: ListState, // State of the message list widget (e.g., selected item)
+    pub show_details: bool,    // Flag to indicate if message details popup should be shown
+    pub mode: Mode,            // Current operating mode (Normal or Filtering)
+    pub input: Input,          // Input buffer for the filtering text
+    pub detail_text: Text<'static>, // The formatted string for the currently viewed detail
+    pub detail_scroll: u16,    // The vertical scroll offset for the detail view
+    pub status_message: String, // A temporary message to show in the status bar
+    pub thread_serial: Option<String>,
+    pub detail_scroll_request: Option<i32>,
+    pub filter_criteria: HashMap<String, String>,
+    pub grouping_keys: Vec<crate::bus::GroupingType>,
+    pub grouping_selection_state: ListState,
+    pub autofilter_selection_state: ListState,
+    pub min_width: u16,
+    pub min_height: u16,
+    pub use_relative_time: bool,
+    pub enable_lighting_strike: bool,
+}
+
+// Default implementation for the App struct
+impl Default for App<'_> {
+    fn default() -> Self {
+        App {
+            stream: BusType::Session,
+            messages: HashMap::new(), // Initialize with an empty list of messages
+            filtered_and_sorted_items: Vec::new(),
+            list_items: Vec::new(),
+            list_state: ListState::default(), // Default list state (no item selected)
+            show_details: false,              // Details popup is hidden by default
+            mode: Mode::Normal,               // Start in Normal mode
+            input: Input::default(),          // Empty input buffer
+            detail_text: Text::default(),     // No detail text initially
+            detail_scroll: 0,                 // Start with no scroll
+            status_message: String::new(),    // No status message initially
+            thread_serial: None,
+            detail_scroll_request: None,
+            filter_criteria: HashMap::new(),
+            grouping_keys: vec![crate::bus::GroupingType::None],
+            grouping_selection_state: ListState::default(),
+            autofilter_selection_state: ListState::default(),
+            min_width: 20,
+            min_height: 20,
+            use_relative_time: false,
+            enable_lighting_strike: false,
+        }
+    }
+}

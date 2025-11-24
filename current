@@ -1,1 +1,11 @@
-Completed: Simplify the display of items in the grouping selection box.
+Task: Look up and display application path and PID for D-Bus messages.
+
+Steps:
+1.  Modify `bus::Item` struct to include `pid: Option<u32>`, `app_name: String`, `app_path: String`, and `app_args: Vec<String>`.
+2.  Update `bus::dbus_listener` to:
+    *   Get the sender's PID using `org.freedesktop.DBus.GetConnectionUnixProcessID` via a D-Bus call.
+    *   Read `/proc/<pid>/cmdline` to get the application path and arguments.
+    *   Populate the new fields in the `Item` struct.
+3.  Modify `main.rs` to display `"{appname} (pid)"` in the message list items.
+4.  Modify `event.rs` (`update_detail_text`) to display `full path + any arguments if present` in the details view.
+5.  Run `cargo check` and `cargo fmt` after each major change.
