@@ -20,6 +20,24 @@ pub struct Item {
     pub is_reply: bool,
     pub stream_type: BusType,
 }
+
+impl Default for Item {
+    fn default() -> Self {
+        Item {
+            timestamp: SystemTime::now(),
+            sender: String::new(),
+            receiver: String::new(),
+            member: String::new(),
+            path: String::new(),
+            message: None,
+            serial: String::new(),
+            reply_serial: String::new(),
+            is_reply: false,
+            stream_type: BusType::Session, // Default value
+        }
+    }
+}
+
 // ... existing BusType and GroupingType enums and impls ...
 // what type of bus is this?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
