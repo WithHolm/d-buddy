@@ -66,7 +66,7 @@ This plan outlines the next steps to integrate the new architecture and build ou
    - [x] details pane: this can be on the line below "details view".
    - [x] details pane: remove the --- Header --- and header info below it
 - [x] currently you can scroll past the bottom of details view. make sure to disable scroll down or up if the bottom/top is reached.
-- [] add serial to listview between timestamp and sender, reply_serial if is_reply  
+- [x] add serial to listview between timestamp and sender, reply_serial if is_reply  
 - [x] filtering should pop up as a text input field in the middle of screen.
    - [x] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
 - [] add total count of messages at top of listview (example [session(10)|system(20)|both(30)])
@@ -89,7 +89,7 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] all colouring should be accessible via a shared struct. this struct should have a color scheme for the app for easier implementation.
 
 ### Messages
-- [] is seemes like recipient and reply_serial is not a property that is captured properly. the message item in bus has this and it seemes like it should have some value, but all testing has shown that it is not captured properly.
+- [x] is seemes like recipient and reply_serial is not a property that is captured properly. the message item in bus has this and it seemes like it should have some value, but all testing has shown that it is not captured properly.
 
 ### Optionals
 - Option to toggle relative times (e.g., “2s ago”) which can help see event bursts more clearly.

@@ -325,6 +325,16 @@ async fn run<'a>(
                             },
                         ),
                         Span::raw("]"),
+                        Span::raw(" "), // Space after timestamp
+                        Span::styled(
+                            item.serial.clone(),
+                            Style::default().fg(config.color_timestamp_normal),
+                        ), // Reusing timestamp color for serial
+                        if item.is_reply && !item.reply_serial.is_empty() {
+                            Span::raw(format!("/{}", item.reply_serial)) // Add reply_serial if it's a reply
+                        } else {
+                            Span::raw("")
+                        },
                         if app.stream == BusType::Both {
                             match item.stream_type {
                                 BusType::Session => Span::styled(
