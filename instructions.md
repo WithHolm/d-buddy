@@ -77,12 +77,15 @@ This plan outlines the next steps to integrate the new architecture and build ou
 ### Filtering 
 - [x] filtering should pop up as a text input field in the middle of screen, one line high. 
    - [x] keymap should be in same place it is in main view (at the bottom)
-- [] if autofilter is activated, a new popup should take its place with the selection you can make and example of value it would use:
-  - [] sender: "sender"
-  - [] member: "member"
-  - [] path: "path"
-  - [] serial: "serial"
-  - [] reply_serial: "reply_serial"
-- [] remove autofilter from main view. only available in filter view
+- [x] if autofilter is activated, a new popup should take its place with the selection you can make and example of value it would use:
+  - [x] sender: "sender"
+  - [x] member: "member"
+  - [x] path: "path"
+  - [x] serial: "serial"
+  - [x] reply_serial: "reply_serial"
+- [x] remove autofilter from main view. only available in filter view
 ### colouring and config:
-- [] all colouring should be accessible via a shared struct. this struct should have a color scheme for the app for easier implementation.
+- [x] all colouring should be accessible via a shared struct. this struct should have a color scheme for the app for easier implementation.
+
+### Messages
+- [] is seemes like recipient and reply_serial is not a property that is captured properly. the message item in bus has this and it seemes like it should have some value, but all testing has shown that it is not captured properly.

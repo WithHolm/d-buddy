@@ -3,12 +3,12 @@ use crate::bus::BusType;
 use ratatui::{
     prelude::*,
     text::{Line, Text},
-    widgets::{Block, Borders, Clear, List, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
+pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
     // Define the main layout with two chunks: one for the message list, one for the input/status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -26,19 +26,19 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     // Create the List widget for displaying D-Bus messages
     let (session_style, system_style, both_style) = match app.stream {
         BusType::Session => (
-            Style::default().fg(Color::LightCyan).bold(),
-            Style::default().fg(Color::White).italic(),
-            Style::default().fg(Color::White).italic(),
+            Style::default().fg(config.color_stream_session).bold(),
+            Style::default().fg(config.color_keybind_text).italic(),
+            Style::default().fg(config.color_keybind_text).italic(),
         ),
         BusType::System => (
-            Style::default().fg(Color::White).italic(),
-            Style::default().fg(Color::LightCyan).bold(),
-            Style::default().fg(Color::White).italic(),
+            Style::default().fg(config.color_keybind_text).italic(),
+            Style::default().fg(config.color_stream_system).bold(),
+            Style::default().fg(config.color_keybind_text).italic(),
         ),
         BusType::Both => (
-            Style::default().fg(Color::White).italic(),
-            Style::default().fg(Color::White).italic(),
-            Style::default().fg(Color::LightCyan).bold(),
+            Style::default().fg(config.color_keybind_text).italic(),
+            Style::default().fg(config.color_keybind_text).italic(),
+            Style::default().fg(config.color_stream_session).bold(), // Reusing session color for "Both" active
         ),
     };
 
@@ -96,6 +96,86 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         frame.render_widget(&input, inner_area);
     }
 
+    // Render Filtering popup as an overlay if in Mode::Filtering
+    if let Mode::Filtering = app.mode {
+        let area = centered_rect(80, 7, frame.area()); // Use frame.size() for full screen relative centering
+        let block = Block::default().title("Filter").borders(Borders::ALL);
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+
+        let inner_area = block.inner(area);
+
+        // Calculate width for the input box and scrolling within the popup
+        let width = inner_area.width.max(3) - 3;
+        let scroll = app.input.visual_scroll(width as usize);
+
+        let mut filter_display_text = String::new();
+        if !app.filter_criteria.is_empty() {
+            let criteria_vec: Vec<String> = app
+                .filter_criteria
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            filter_display_text.push_str(&format!("[{}] ", criteria_vec.join(", ")));
+        }
+        filter_display_text.push_str(app.input.value());
+
+        // Create a Paragraph widget for the input text, now always single line
+        let input = Paragraph::new(filter_display_text).scroll((0, scroll as u16));
+        frame.render_widget(&input, inner_area);
+    }
+
+    // Render AutoFilterSelection popup as an overlay if in Mode::AutoFilterSelection
+    if let Mode::AutoFilterSelection = app.mode {
+        let area = centered_rect(60, 30, frame.area());
+        let block = Block::default()
+            .title("Select AutoFilter Field")
+            .borders(Borders::ALL);
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+
+        let inner_area = block.inner(area);
+
+        let autofilter_options = ["sender", "member", "path", "serial", "reply_serial"];
+        let mut list_items: Vec<ListItem> = Vec::new();
+
+        if let Some(selected_index) = app.list_state.selected() {
+            if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
+                for &option in autofilter_options.iter() {
+                    let example_value = match option {
+                        "sender" => item.sender.as_str(),
+                        "member" => item.member.as_str(),
+                        "path" => item.path.as_str(),
+                        "serial" => item.serial.as_str(),
+                        "reply_serial" => item.reply_serial.as_str(),
+                        _ => "",
+                    };
+                    list_items.push(ListItem::new(Line::from(vec![
+                        Span::raw(format!("{}: ", option)),
+                        Span::styled(
+                            example_value,
+                            Style::default().fg(config.color_autofilter_value),
+                        ),
+                    ])));
+                }
+            } else { /* ... */
+            }
+        } else { /* ... */
+        }
+
+        let list = List::new(list_items)
+            .block(Block::default())
+            .highlight_symbol("> ")
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(config.color_selection_highlight_fg)
+                    .bg(config.color_selection_highlight_bg),
+            );
+
+        frame.render_stateful_widget(list, inner_area, &mut app.autofilter_selection_state);
+    }
+
     // If show_details is true, render the message details popup
     if app.show_details {
         let area = centered_rect(80, 80, frame.area());
@@ -140,11 +220,11 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
     match app.mode {
         Mode::Filtering => {
             let key_hints = Line::from(vec![
-                "Esc".bold().cyan(),
+                "Esc".bold().fg(config.color_keybind_key),
                 ": clear | ".into(),
-                "Enter".bold().cyan(),
+                "Enter".bold().fg(config.color_keybind_key),
                 ": apply | ".into(),
-                "Tab".bold().cyan(),
+                "Tab".bold().fg(config.color_keybind_key),
                 ": autofilter".into(),
             ]);
             let help_paragraph = Paragraph::new(key_hints)
@@ -153,47 +233,47 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         }
         Mode::Normal => {
             let help_text = if !app.status_message.is_empty() {
-                Line::from(app.status_message.as_str().yellow())
+                Line::from(app.status_message.as_str().fg(config.color_status_message))
             } else if app.show_details {
                 Line::from(vec![
-                    "c".bold().cyan(),
+                    "c".bold().fg(config.color_keybind_key),
                     ": copy | ".into(),
-                    "s".bold().cyan(),
+                    "s".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "esc".bold().cyan(),
+                    "esc".bold().fg(config.color_keybind_key),
                     ": close | ".into(),
-                    "j".bold().cyan(),
+                    "j".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "k".bold().cyan(),
+                    "k".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "PgUp".bold().cyan(),
+                    "PgUp".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "PgDn".bold().cyan(),
+                    "PgDn".bold().fg(config.color_keybind_key),
                     ": scroll".into(),
                 ])
             } else {
                 Line::from(vec![
-                    "q".bold().cyan(),
+                    "q".bold().fg(config.color_keybind_key),
                     ": quit | ".into(),
-                    "Tab".bold().cyan(),
+                    "Tab".bold().fg(config.color_keybind_key),
                     ": view | ".into(),
-                    "f".bold().cyan(),
+                    "f".bold().fg(config.color_keybind_key),
                     ": filter | ".into(),
-                    "g".bold().cyan(),
+                    "g".bold().fg(config.color_keybind_key),
                     ": group | ".into(),
-                    "a".bold().cyan(),
+                    "a".bold().fg(config.color_keybind_key),
                     ": autofilter | ".into(),
-                    "r".bold().cyan(),
+                    "r".bold().fg(config.color_keybind_key),
                     ": reply | ".into(),
-                    "x".bold().cyan(),
+                    "x".bold().fg(config.color_keybind_key),
                     ": clear | ".into(),
-                    "s".bold().cyan(),
+                    "s".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "space".bold().cyan(),
+                    "space".bold().fg(config.color_keybind_key),
                     ": details | ".into(),
-                    "↑".bold().cyan(),
+                    "↑".bold().fg(config.color_keybind_key),
                     "/".dim(),
-                    "↓".bold().cyan(),
+                    "↓".bold().fg(config.color_keybind_key),
                     ": navigate".into(),
                 ])
             };
@@ -203,17 +283,14 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
         }
         Mode::AutoFilterSelection => {
             let help_paragraph = Paragraph::new(Line::from(vec![
-                Span::raw("Autofilter by: "),
-                "s".bold().cyan(),
-                ": sender | ".into(),
-                "m".bold().cyan(),
-                ": member | ".into(),
-                "p".bold().cyan(),
-                ": path | ".into(),
-                "r".bold().cyan(),
-                ": serial | ".into(),
-                "esc".bold().cyan(),
-                ": cancel".into(),
+                "Esc".bold().fg(config.color_keybind_key),
+                ": cancel | ".into(),
+                "Enter".bold().fg(config.color_keybind_key),
+                ": select | ".into(),
+                "↑".bold().fg(config.color_keybind_key),
+                "/".dim(),
+                "↓".bold().fg(config.color_keybind_key),
+                ": navigate".into(),
             ]))
             .block(Block::default().borders(Borders::ALL).title("Autofilter"));
             frame.render_widget(help_paragraph, chunks[1]);
@@ -222,27 +299,69 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>) {
             let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
             let help_paragraph = Paragraph::new(Line::from(vec![
                 Span::raw("Thread View (Serial: "),
-                Span::styled(thread_serial_display, Style::default().fg(Color::LightBlue)),
+                Span::styled(
+                    thread_serial_display,
+                    Style::default().fg(config.color_thread_serial),
+                ),
                 Span::raw(") | "),
-                "Esc".bold().cyan(),
+                "Esc".bold().fg(config.color_keybind_key),
                 ": exit thread view".into(),
             ]))
             .block(Block::default().borders(Borders::ALL).title("Thread View"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
-            let help_paragraph = Paragraph::new(Line::from(vec![
-                "Esc".bold().cyan(),
-                ": cancel | ".into(),
-                "Enter".bold().cyan(),
-                ": select | ".into(),
-                "↑".bold().cyan(),
-                "/".dim(),
-                "↓".bold().cyan(),
-                ": navigate".into(),
-            ]))
-            .block(Block::default().borders(Borders::ALL).title("Grouping"));
-            frame.render_widget(help_paragraph, chunks[1]);
+            let area = centered_rect(50, 20, frame.area());
+            let block = Block::default()
+                .title("Select Grouping")
+                .borders(Borders::ALL);
+            frame.render_widget(Clear, area);
+            frame.render_widget(&block, area);
+
+            let inner_area = block.inner(area);
+
+            let grouping_options = ["Sender", "Member", "Path", "Serial", "None"];
+            let list_items: Vec<ListItem> = grouping_options
+                .iter()
+                .enumerate()
+                .map(|(i, &option)| {
+                    let mut spans = vec![];
+                    // Add a small indicator for the current grouping type
+                    if app.grouping_type.to_string() == option {
+                        spans.push(Span::styled(
+                            "● ",
+                            Style::default().fg(config.color_grouping_active_indicator),
+                        ));
+                    } else {
+                        spans.push(Span::raw("  "));
+                    }
+                    spans.push(Span::raw(format!(
+                        "{}: {}",
+                        match i {
+                            0 => "s",
+                            1 => "m",
+                            2 => "p",
+                            3 => "i",
+                            4 => "n",
+                            _ => "",
+                        },
+                        option
+                    )));
+                    ListItem::new(Line::from(spans))
+                })
+                .collect();
+
+            let list = List::new(list_items)
+                .block(Block::default())
+                .highlight_symbol("> ")
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(config.color_selection_highlight_fg)
+                        .bg(config.color_selection_highlight_bg),
+                );
+
+            frame.render_stateful_widget(list, inner_area, &mut app.grouping_selection_state);
         }
     }
 }

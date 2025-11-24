@@ -38,6 +38,24 @@ pub struct Config {
     pub color_dict: Color,
     pub color_struct: Color,
     pub color_default_stripe: Color,
+    pub color_timestamp_normal: Color,
+    pub color_timestamp_details: Color,
+    pub color_stream_session: Color,
+    pub color_stream_system: Color,
+    pub color_sender_normal: Color,
+    pub color_sender_details: Color,
+    pub color_member_normal: Color,
+    pub color_member_details: Color,
+    pub color_path_normal: Color,
+    pub color_path_details: Color,
+    pub color_status_message: Color,
+    pub color_keybind_text: Color,
+    pub color_keybind_key: Color,
+    pub color_thread_serial: Color,
+    pub color_grouping_active_indicator: Color,
+    pub color_selection_highlight_bg: Color,
+    pub color_selection_highlight_fg: Color,
+    pub color_autofilter_value: Color,
 }
 
 impl Default for Config {
@@ -46,6 +64,24 @@ impl Default for Config {
             color_dict: Color::Rgb(20, 20, 40),   // Dark Blue
             color_struct: Color::Rgb(40, 20, 40), // Dark Magenta
             color_default_stripe: Color::DarkGray,
+            color_timestamp_normal: Color::Yellow,
+            color_timestamp_details: Color::White,
+            color_stream_session: Color::Cyan,
+            color_stream_system: Color::LightMagenta,
+            color_sender_normal: Color::Green,
+            color_sender_details: Color::White,
+            color_member_normal: Color::Blue,
+            color_member_details: Color::White,
+            color_path_normal: Color::Magenta,
+            color_path_details: Color::White,
+            color_status_message: Color::Yellow,
+            color_keybind_text: Color::Reset,
+            color_keybind_key: Color::Cyan,
+            color_thread_serial: Color::LightBlue,
+            color_grouping_active_indicator: Color::LightGreen,
+            color_selection_highlight_bg: Color::DarkGray,
+            color_selection_highlight_fg: Color::Cyan,
+            color_autofilter_value: Color::Green,
         }
     }
 }
@@ -77,6 +113,7 @@ struct App<'a> {
     filter_criteria: HashMap<String, String>,
     grouping_type: bus::GroupingType,
     grouping_selection_state: ListState,
+    autofilter_selection_state: ListState,
 }
 
 // Default implementation for the App struct
@@ -99,6 +136,7 @@ impl Default for App<'_> {
             filter_criteria: HashMap::new(),
             grouping_type: bus::GroupingType::default(),
             grouping_selection_state: ListState::default(),
+            autofilter_selection_state: ListState::default(),
         }
     }
 }
@@ -280,20 +318,22 @@ async fn run<'a>(
                         Span::styled(
                             timestamp,
                             if app.show_details {
-                                Style::default().fg(Color::White)
+                                Style::default().fg(config.color_timestamp_details)
                             } else {
-                                Style::default().fg(Color::Yellow)
+                                Style::default().fg(config.color_timestamp_normal)
                             },
                         ),
                         Span::raw("]"),
                         if app.stream == BusType::Both {
                             match item.stream_type {
-                                BusType::Session => {
-                                    Span::styled("[sess]", Style::default().fg(Color::Cyan))
-                                }
-                                BusType::System => {
-                                    Span::styled("[syst]", Style::default().fg(Color::LightMagenta))
-                                }
+                                BusType::Session => Span::styled(
+                                    "[sess]",
+                                    Style::default().fg(config.color_stream_session),
+                                ),
+                                BusType::System => Span::styled(
+                                    "[syst]",
+                                    Style::default().fg(config.color_stream_system),
+                                ),
                                 _ => Span::raw(""), // Should not happen in this context
                             }
                         } else {
@@ -308,27 +348,27 @@ async fn run<'a>(
                         Span::styled(
                             item.sender.clone(),
                             if app.show_details {
-                                Style::default().fg(Color::White)
+                                Style::default().fg(config.color_sender_details)
                             } else {
-                                Style::default().fg(Color::Green)
+                                Style::default().fg(config.color_sender_normal)
                             },
                         ),
                         Span::raw(", member: "),
                         Span::styled(
                             item.member.clone(),
                             if app.show_details {
-                                Style::default().fg(Color::White)
+                                Style::default().fg(config.color_member_details)
                             } else {
-                                Style::default().fg(Color::Blue)
+                                Style::default().fg(config.color_member_normal)
                             },
                         ),
                         Span::raw(", path: "),
                         Span::styled(
                             item.path.clone(),
                             if app.show_details {
-                                Style::default().fg(Color::White)
+                                Style::default().fg(config.color_path_details)
                             } else {
-                                Style::default().fg(Color::Magenta)
+                                Style::default().fg(config.color_path_normal)
                             },
                         ),
                     ]);
@@ -342,7 +382,7 @@ async fn run<'a>(
             }
         }
 
-        terminal.draw(|f| ui::ui(f, app))?;
+        terminal.draw(|f| ui::ui(f, app, config))?;
 
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
@@ -369,19 +409,8 @@ async fn run<'a>(
                                 };
                                 app.list_state.select(None); // Reset selection
                             }
+
                             KeyCode::Char('x') => {
-                                if let Some(messages_arc) = app.messages.get(&app.stream) {
-                                    let mut messages = messages_arc.lock().await;
-                                    messages.clear();
-                                    app.list_state.select(None);
-                                }
-                            }
-                            KeyCode::Char('a') => {
-                                if app.list_state.selected().is_some() {
-                                    app.mode = Mode::AutoFilterSelection;
-                                }
-                            }
-                            KeyCode::Char('t') => {
                                 if let Some(selected) = app.list_state.selected() {
                                     if let Some(item) = app.filtered_and_sorted_items.get(selected)
                                     {
@@ -542,9 +571,13 @@ async fn run<'a>(
                                 app.mode = Mode::Normal;
                             }
                             KeyCode::Tab => {
-                                // If there's a selected item, go to AutoFilterSelection mode
+                                // If there's a selected item in the main list,
+                                // initialize autofilter_selection_state and enter AutoFilterSelection mode.
                                 if app.list_state.selected().is_some() {
                                     app.mode = Mode::AutoFilterSelection;
+                                    // Ensure a selection is made when entering the autofilter selection mode
+                                    // Default to the first option (sender)
+                                    app.autofilter_selection_state.select(Some(0));
                                 }
                             }
                             KeyCode::Esc => {
@@ -602,35 +635,61 @@ async fn run<'a>(
                     }
                 }
                 Mode::AutoFilterSelection => {
+                    let autofilter_options = ["sender", "member", "path", "serial", "reply_serial"];
+                    let max_index = autofilter_options.len() - 1;
+
                     if let Event::Key(key) = event {
-                        if let Some(selected) = app.list_state.selected() {
-                            if let Some(item) = app.filtered_and_sorted_items.get(selected) {
-                                match key.code {
-                                    KeyCode::Char('s') => {
-                                        app.input = Input::from(item.sender.as_str());
-                                        app.mode = Mode::Filtering;
-                                    }
-                                    KeyCode::Char('m') => {
-                                        app.input = Input::from(item.member.as_str());
-                                        app.mode = Mode::Filtering;
-                                    }
-                                    KeyCode::Char('p') => {
-                                        app.input = Input::from(item.path.as_str());
-                                        app.mode = Mode::Filtering;
-                                    }
-                                    KeyCode::Char('r') => {
-                                        app.input = Input::from(item.serial.as_str());
-                                        app.mode = Mode::Filtering;
-                                    }
-                                    KeyCode::Esc => {
-                                        app.mode = Mode::Normal;
-                                    }
-                                    _ => {}
-                                }
+                        match key.code {
+                            KeyCode::Up => {
+                                let i = match app.autofilter_selection_state.selected() {
+                                    Some(i) => i.saturating_sub(1),
+                                    None => 0,
+                                };
+                                app.autofilter_selection_state.select(Some(i));
                             }
+                            KeyCode::Down => {
+                                let i = match app.autofilter_selection_state.selected() {
+                                    Some(i) => (i + 1).min(max_index),
+                                    None => 0,
+                                };
+                                app.autofilter_selection_state.select(Some(i));
+                            }
+                            KeyCode::Enter => {
+                                if let Some(selected_option_index) =
+                                    app.autofilter_selection_state.selected()
+                                {
+                                    if let Some(selected_message_index) = app.list_state.selected()
+                                    {
+                                        if let Some(item) = app
+                                            .filtered_and_sorted_items
+                                            .get(selected_message_index)
+                                        {
+                                            let field_name =
+                                                autofilter_options[selected_option_index];
+                                            let field_value = match field_name {
+                                                "sender" => item.sender.as_str(),
+                                                "member" => item.member.as_str(),
+                                                "path" => item.path.as_str(),
+                                                "serial" => item.serial.as_str(),
+                                                "reply_serial" => item.reply_serial.as_str(),
+                                                _ => "", // Should not happen
+                                            };
+                                            app.input = Input::from(format!(
+                                                "{}={}",
+                                                field_name, field_value
+                                            ));
+                                        }
+                                    }
+                                }
+                                app.autofilter_selection_state.select(None); // Clear selection
+                                app.mode = Mode::Filtering; // Go back to filtering input
+                            }
+                            KeyCode::Esc => {
+                                app.autofilter_selection_state.select(None); // Clear selection
+                                app.mode = Mode::Filtering; // Go back to filtering input
+                            }
+                            _ => {}
                         }
-                    } else {
-                        app.mode = Mode::Normal; // No item selected, go back to normal
                     }
                 }
                 Mode::ThreadView => {
@@ -668,15 +727,27 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
             };
 
             header_lines.push(Line::from(vec![
-                Span::styled(item.sender.clone(), Style::default().fg(Color::Green)),
+                Span::styled(
+                    item.sender.clone(),
+                    Style::default().fg(config.color_sender_normal),
+                ),
                 recipient_info,
                 Span::raw("|"),
-                Span::styled(item.serial.clone(), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    item.serial.clone(),
+                    Style::default().fg(config.color_timestamp_normal),
+                ),
                 reply_serial_info,
                 Span::raw("|"),
-                Span::styled(item.member.clone(), Style::default().fg(Color::Blue)),
+                Span::styled(
+                    item.member.clone(),
+                    Style::default().fg(config.color_member_normal),
+                ),
                 Span::raw(":"),
-                Span::styled(item.path.clone(), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    item.path.clone(),
+                    Style::default().fg(config.color_path_normal),
+                ),
             ]));
             header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
 
