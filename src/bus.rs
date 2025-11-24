@@ -3,10 +3,9 @@ use futures::StreamExt; // Required for stream.next().await
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::fs; // For reading /proc/cmdline
-use zbus::{fdo::DBusProxy, Connection, MessageStream}; // For parsing app name from path
+use zbus::{fdo::DBusProxy, Connection, MessageStream};
+use tokio::fs::read;
 
-// ... existing Item struct and impl Default for Item ...
 #[derive(Debug, Clone)]
 pub struct Item {
     pub timestamp: SystemTime,
@@ -19,6 +18,10 @@ pub struct Item {
     pub reply_serial: String,
     pub is_reply: bool,
     pub stream_type: BusType,
+    pub pid: Option<u32>,
+    pub app_name: String,
+    pub app_path: String,
+    pub app_args: Vec<String>,
 }
 
 impl Default for Item {
@@ -34,11 +37,14 @@ impl Default for Item {
             reply_serial: String::new(),
             is_reply: false,
             stream_type: BusType::Session, // Default value
+            pid: None,
+            app_name: String::new(),
+            app_path: String::new(),
+            app_args: Vec::new(),
         }
     }
 }
 
-// ... existing BusType and GroupingType enums and impls ...
 // what type of bus is this?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BusType {
@@ -56,18 +62,59 @@ pub enum GroupingType {
     None,
 }
 
+impl Default for GroupingType {
+    fn default() -> Self {
+        GroupingType::Sender
+    }
+}
+
+impl std::fmt::Display for GroupingType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GroupingType::Sender => write!(f, "Sender"),
+            GroupingType::Member => write!(f, "Member"),
+            GroupingType::Path => write!(f, "Path"),
+            GroupingType::Serial => write!(f, "Serial"),
+            GroupingType::None => write!(f, "None"),
+        }
+    }
+}
+
+impl std::str::FromStr for GroupingType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Sender" => Ok(GroupingType::Sender),
+            "Member" => Ok(GroupingType::Member),
+            "Path" => Ok(GroupingType::Path),
+            "Serial" => Ok(GroupingType::Serial),
+            "None" => Ok(GroupingType::None),
+            _ => Err(anyhow::anyhow!("Unknown GroupingType: {}", s)),
+        }
+    }
+}
+
 async fn get_process_info(
     conn: &zbus::Connection,
     sender_name: &str,
 ) -> Option<(u32, String, String, Vec<String>)> {
-    let proxy = zbus::fdo::DBusProxy::new(conn).await.ok()?;
-    let pid: u32 = proxy
-        .get_connection_unix_process_id(sender_name)
+    let pid: u32 = conn
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",      // Object path
+            Some("org.freedesktop.DBus"), // Interface name
+            "GetConnectionUnixProcessID", // Member name
+            &(sender_name),               // Body: argument to the method
+        )
         .await
+        .ok()?
+        .body()
+        .deserialize()
         .ok()?;
 
     let cmdline_path = format!("/proc/{}/cmdline", pid);
-    let cmdline_content = tokio::fs::read(&cmdline_path).await.ok()?;
+    let cmdline_content = read(&cmdline_path).await.ok()?;
 
     // cmdline is null-separated, typically the first entry is the executable path
     let args: Vec<String> = cmdline_content
@@ -94,14 +141,22 @@ async fn get_process_info(
     Some((pid, app_name, app_path, args))
 }
 
+// creates a new dbus listener for the given but type. returns a lis
 pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
     let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let messages_clone = Arc::clone(&messages);
 
+    //unwrap because if connection fails, the program have no reason to exist..
     let conn: Connection = match t {
         BusType::Session => zbus::Connection::session().await?,
         BusType::System => zbus::Connection::system().await?,
-        BusType::Both => zbus::Connection::session().await?,
+        BusType::Both => {
+            // This is a placeholder. "Both" would require merging two streams,
+            // which needs a more complex implementation.
+            // For now, we can default to session or return an error.
+            // Let's default to Session for now to avoid crashing.
+            zbus::Connection::session().await?
+        }
     };
 
     let proxy = DBusProxy::new(&conn).await?;
@@ -157,10 +212,10 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
                     app_args_val = aa;
                 }
             }
-
+            //create item
             let item = Item {
                 timestamp: SystemTime::now(),
-                sender: sender_name,
+                sender: sender_name.clone(),
                 receiver: header
                     .destination()
                     .map(|s| s.as_str().to_string())

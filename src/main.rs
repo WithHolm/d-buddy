@@ -379,7 +379,7 @@ async fn run<'a>(
                         },
                         Span::raw("sender: "),
                         Span::styled(
-                            item.sender.clone(),
+                            format!("{} (pid:{})", item.app_name, item.pid.unwrap_or(0)),
                             if app.show_details {
                                 Style::default().fg(config.color_sender_details)
                             } else {

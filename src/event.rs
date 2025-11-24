@@ -404,6 +404,27 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
             ]));
             header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
 
+            if !item.app_path.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::raw("App Path: "),
+                    Span::styled(
+                        item.app_path.clone(),
+                        Style::default().fg(config.color_path_normal), // Reusing path color for consistency
+                    ),
+                ]));
+            }
+
+            if !item.app_args.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::raw("App Args: "),
+                    Span::styled(
+                        item.app_args.join(" "),
+                        Style::default().fg(config.color_member_normal), // Reusing member color for consistency
+                    ),
+                ]));
+            }
+            header_lines.push(Line::from(vec![Span::raw("")])); // Empty line for spacing
+
             let detail_text = if let Some(message) = &item.message {
                 let body = message.body();
                 let body_sig = body.signature();
