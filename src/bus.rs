@@ -7,7 +7,19 @@ use tokio::fs; // For reading /proc/cmdline
 use zbus::{fdo::DBusProxy, Connection, MessageStream}; // For parsing app name from path
 
 // ... existing Item struct and impl Default for Item ...
-
+#[derive(Debug, Clone)]
+pub struct Item {
+    pub timestamp: SystemTime,
+    pub sender: String,
+    pub receiver: String,
+    pub member: String,
+    pub path: String,
+    pub message: Option<zbus::Message>,
+    pub serial: String,
+    pub reply_serial: String,
+    pub is_reply: bool,
+    pub stream_type: BusType,
+}
 // ... existing BusType and GroupingType enums and impls ...
 // what type of bus is this?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
