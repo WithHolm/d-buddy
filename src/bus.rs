@@ -1,21 +1,40 @@
 use anyhow::Result; // Added for error propagation
 use futures::StreamExt; // Required for stream.next().await
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
-use zbus::{fdo::DBusProxy, Connection, MessageStream};
 use tokio::fs; // For reading /proc/cmdline
-use std::path::PathBuf; // For parsing app name from path
+use zbus::{fdo::DBusProxy, Connection, MessageStream}; // For parsing app name from path
 
 // ... existing Item struct and impl Default for Item ...
 
 // ... existing BusType and GroupingType enums and impls ...
+// what type of bus is this?
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BusType {
+    Session = 0,
+    System = 1,
+    Both = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupingType {
+    Sender,
+    Member,
+    Path,
+    Serial,
+    None,
+}
 
 async fn get_process_info(
     conn: &zbus::Connection,
     sender_name: &str,
 ) -> Option<(u32, String, String, Vec<String>)> {
     let proxy = zbus::fdo::DBusProxy::new(conn).await.ok()?;
-    let pid: u32 = proxy.get_connection_unix_process_id(sender_name).await.ok()?;
+    let pid: u32 = proxy
+        .get_connection_unix_process_id(sender_name)
+        .await
+        .ok()?;
 
     let cmdline_path = format!("/proc/{}/cmdline", pid);
     let cmdline_content = tokio::fs::read(&cmdline_path).await.ok()?;
@@ -52,9 +71,7 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
     let conn: Connection = match t {
         BusType::Session => zbus::Connection::session().await?,
         BusType::System => zbus::Connection::system().await?,
-        BusType::Both => {
-            zbus::Connection::session().await?
-        }
+        BusType::Both => zbus::Connection::session().await?,
     };
 
     let proxy = DBusProxy::new(&conn).await?;
@@ -110,7 +127,7 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
                     app_args_val = aa;
                 }
             }
-            
+
             let item = Item {
                 timestamp: SystemTime::now(),
                 sender: sender_name,
