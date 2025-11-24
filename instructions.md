@@ -75,8 +75,8 @@ This plan outlines the next steps to integrate the new architecture and build ou
  - [x] selector is not active by default in group selection view. please make it always active.
 
 ### Filtering 
-- [] filtering should pop up as a text input field in the middle of screen, one line high. 
-   - [] keymap should be in same place it is in main view (at the bottom)
+- [x] filtering should pop up as a text input field in the middle of screen, one line high. 
+   - [x] keymap should be in same place it is in main view (at the bottom)
 - [] if autofilter is activated, a new popup should take its place with the selection you can make and example of value it would use:
   - [] sender: "sender"
   - [] member: "member"
