@@ -1,0 +1,35 @@
+# Maintainer: Your Name <youremail@example.com>
+pkgname=d-buddy
+pkgver=0.1.0      # <-- you should set this to the current version
+pkgrel=1
+pkgdesc="A description of d-buddy (put what it does here)"
+arch=('x86_64')   # or whatever architectures you want to support
+url="https://github.com/withholm/d-buddy"
+license=('MIT')   # or whatever license your project uses
+depends=()        # runtime dependencies; likely minimal for a Rust CLI
+makedepends=('rust' 'cargo')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/withholm/d-buddy/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')  # replace SKIP with real checksum, e.g. via `sha256sum`
+
+prepare() {
+  cd "$srcdir/$pkgname-$pkgver"
+  # If you need to patch, apply patches here
+}
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  cargo build --release --locked
+}
+
+check() {
+  cd "$srcdir/$pkgname-$pkgver"
+  cargo test --release
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  install -Dm755 "target/release/d-buddy" "$pkgdir/usr/bin/d-buddy"
+
+  # If you have a license file:
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

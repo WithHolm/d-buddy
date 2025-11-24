@@ -1,14 +1,1 @@
-Enhance details pane display:
-1.  Move "Message Details" to the line below the details view.
-2.  Remove the "--- Header ---" and its associated info.
-
-**Recommended steps:**
-1.  **Modify `src/ui.rs`**:
-    *   Locate the `title_spans` variable within the `if app.show_details` block.
-    *   Separate the static "Message Details" and `scroll_indicator` from the dynamic item details.
-    *   Render "Message Details [scroll_indicator]" as the `Block` title.
-    *   Modify the `Paragraph` content to include the dynamic item details, effectively moving them to the line below.
-2.  **Modify `src/main.rs` in `update_detail_text`**:
-    *   Remove the `header_lines.push(Line::from(vec![Span::styled("--- Header ---", ...)]));` line and the subsequent header information.
-3.  Run `cargo check` to verify compilation.
-4.  Remind me to commit the changes, providing a commit message.
+Completed: Simplify the display of items in the grouping selection box.

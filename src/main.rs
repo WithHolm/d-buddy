@@ -115,6 +115,8 @@ struct App<'a> {
     grouping_type: bus::GroupingType,
     grouping_selection_state: ListState,
     autofilter_selection_state: ListState,
+    min_width: u16,
+    min_height: u16,
 }
 
 // Default implementation for the App struct
@@ -138,6 +140,8 @@ impl Default for App<'_> {
             grouping_type: bus::GroupingType::default(),
             grouping_selection_state: ListState::default(),
             autofilter_selection_state: ListState::default(),
+            min_width: 20,
+            min_height: 20,
         }
     }
 }
@@ -201,6 +205,18 @@ async fn run<'a>(
     let tick_rate = Duration::from_millis(250);
 
     loop {
+        let session_count = if let Some(arc) = app.messages.get(&BusType::Session) {
+            arc.lock().await.len()
+        } else {
+            0
+        };
+        let system_count = if let Some(arc) = app.messages.get(&BusType::System) {
+            arc.lock().await.len()
+        } else {
+            0
+        };
+        let both_count = session_count + system_count;
+
         // Create a scope to ensure the lock is released before drawing
         {
             let all_messages = match app.stream {
@@ -328,25 +344,16 @@ async fn run<'a>(
                         Span::raw(" "), // Space after timestamp
                         Span::styled(
                             item.serial.clone(),
-                            Style::default().fg(config.color_timestamp_normal),
-                        ), // Reusing timestamp color for serial
+                            match item.stream_type {
+                                BusType::Session => {
+                                    Style::default().fg(config.color_stream_session)
+                                }
+                                BusType::System => Style::default().fg(config.color_stream_system),
+                                BusType::Both => Style::default().fg(config.color_timestamp_normal), // Default or neutral color for combined view
+                            },
+                        ),
                         if item.is_reply && !item.reply_serial.is_empty() {
                             Span::raw(format!("/{}", item.reply_serial)) // Add reply_serial if it's a reply
-                        } else {
-                            Span::raw("")
-                        },
-                        if app.stream == BusType::Both {
-                            match item.stream_type {
-                                BusType::Session => Span::styled(
-                                    "[sess]",
-                                    Style::default().fg(config.color_stream_session),
-                                ),
-                                BusType::System => Span::styled(
-                                    "[syst]",
-                                    Style::default().fg(config.color_stream_system),
-                                ),
-                                _ => Span::raw(""), // Should not happen in this context
-                            }
                         } else {
                             Span::raw("")
                         },
@@ -393,7 +400,7 @@ async fn run<'a>(
             }
         }
 
-        terminal.draw(|f| ui::ui(f, app, config))?;
+        terminal.draw(|f| ui::ui(f, app, config, session_count, system_count, both_count))?;
 
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
@@ -746,7 +753,11 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
                 Span::raw("|"),
                 Span::styled(
                     item.serial.clone(),
-                    Style::default().fg(config.color_timestamp_normal),
+                    match item.stream_type {
+                        BusType::Session => Style::default().fg(config.color_stream_session),
+                        BusType::System => Style::default().fg(config.color_stream_system),
+                        BusType::Both => Style::default().fg(config.color_timestamp_normal), // Fallback
+                    },
                 ),
                 reply_serial_info,
                 Span::raw("|"),

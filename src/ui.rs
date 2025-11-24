@@ -8,7 +8,24 @@ use ratatui::{
 use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
+pub fn ui<'a>(
+    frame: &mut Frame,
+    app: &mut App<'a>,
+    config: &Config,
+    session_count: usize,
+    system_count: usize,
+    both_count: usize,
+) {
+    if frame.area().width < app.min_width || frame.area().height < app.min_height {
+        let message = "Console is too small to display the application";
+        let paragraph = Paragraph::new(message)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        let area = centered_rect(60, 20, frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_widget(paragraph, area);
+        return;
+    }
     // Define the main layout with two chunks: one for the message list, one for the input/status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -44,11 +61,11 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
 
     let title_spans = Line::from(vec![
         Span::raw("D-Bus Signals ["),
-        Span::styled("Session", session_style),
+        Span::styled(format!("Session({})", session_count), session_style),
         Span::raw("|"),
-        Span::styled("System", system_style),
+        Span::styled(format!("System({})", system_count), system_style),
         Span::raw("|"),
-        Span::styled("Both", both_style),
+        Span::styled(format!("Both({})", both_count), both_style),
         Span::raw("]"),
     ]);
 
@@ -309,7 +326,37 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
-            let area = centered_rect(50, 20, frame.area());
+            let grouping_options = ["Sender", "Member", "Path", "Serial", "None"];
+            let popup_height = (grouping_options.len() + 2) as u16;
+            let popup_width = 30;
+
+            let area = {
+                let vertical_padding = (frame.area().height.saturating_sub(popup_height)) / 2;
+                let horizontal_padding = (frame.area().width.saturating_sub(popup_width)) / 2;
+                let a = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(
+                        [
+                            Constraint::Length(vertical_padding),
+                            Constraint::Length(popup_height),
+                            Constraint::Length(vertical_padding),
+                        ]
+                        .as_ref(),
+                    )
+                    .split(frame.area());
+
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(
+                        [
+                            Constraint::Length(horizontal_padding),
+                            Constraint::Length(popup_width),
+                            Constraint::Length(horizontal_padding),
+                        ]
+                        .as_ref(),
+                    )
+                    .split(a[1])[1]
+            };
             let block = Block::default()
                 .title("Select Grouping")
                 .borders(Borders::ALL);
@@ -318,11 +365,9 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
 
             let inner_area = block.inner(area);
 
-            let grouping_options = ["Sender", "Member", "Path", "Serial", "None"];
             let list_items: Vec<ListItem> = grouping_options
                 .iter()
-                .enumerate()
-                .map(|(i, &option)| {
+                .map(|&option| {
                     let mut spans = vec![];
                     // Add a small indicator for the current grouping type
                     if app.grouping_type.to_string() == option {
@@ -333,18 +378,7 @@ pub fn ui<'a>(frame: &mut Frame, app: &mut App<'a>, config: &Config) {
                     } else {
                         spans.push(Span::raw("  "));
                     }
-                    spans.push(Span::raw(format!(
-                        "{}: {}",
-                        match i {
-                            0 => "s",
-                            1 => "m",
-                            2 => "p",
-                            3 => "i",
-                            4 => "n",
-                            _ => "",
-                        },
-                        option
-                    )));
+                    spans.push(Span::raw(option));
                     ListItem::new(Line::from(spans))
                 })
                 .collect();

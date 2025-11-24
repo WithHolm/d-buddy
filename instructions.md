@@ -67,13 +67,19 @@ This plan outlines the next steps to integrate the new architecture and build ou
    - [x] details pane: remove the --- Header --- and header info below it
 - [x] currently you can scroll past the bottom of details view. make sure to disable scroll down or up if the bottom/top is reached.
 - [x] add serial to listview between timestamp and sender, reply_serial if is_reply  
+- [x] Color serial in listview based on stream type (Session/System)
 - [x] filtering should pop up as a text input field in the middle of screen.
    - [x] add keymaps for filtering during filter view: esc: clear filter, enter: apply filter, tab: autofilter- [x] BUGFIX before anything else! no keys will work untill i have pressed up or down in main view
-- [] add total count of messages at top of listview (example [session(10)|system(20)|both(30)])
+- [x] add total count of messages at top of listview (example [session(10)|system(20)|both(30)])
+- [] add a check of console height/width.. if its under 20 height or width, make it go clear with a message "Console is too small to display the application". this need to be in app config
+
+
 ### Grouping
 - [x] currently it groups by sender. please allow to group by member, path, serial and NONE. use "g" to toggle grouping. it should come up as a selector box in the middle of the screen.
  - [x] group selector list should be able to be scrolled up and down using the arrow keys. (up/down arrow keys)
  - [x] selector is not active by default in group selection view. please make it always active.
+- [] the size of the box where you select grouping is currently relative to console/application height and width. this needs to be static based upon grouping size, so the box is just as high as there are items in the list.
+- [] a selecatble item in the grouping selection box looks like this currently ">   m: Member" can you change this to only be "> Member" ?
 
 ### Filtering 
 - [x] filtering should pop up as a text input field in the middle of screen, one line high. 
