@@ -3,6 +3,7 @@
 build:
 	cargo build
 
+# run as cargo with logging and tracing enabled..
 run:
     RUST_LOG=d_buddy=trace cargo run -- --log
 

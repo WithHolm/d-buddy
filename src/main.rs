@@ -25,10 +25,11 @@ use std::{
     env,
     io::{self, stdout},
     time::Duration,
+    borrow::Cow, // Add this line
 };
 
 use tracing::instrument;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 /// A simple TUI for browsing D-Bus messages.
 #[derive(Parser, Debug)]
@@ -53,6 +54,7 @@ async fn main() -> Result<()> {
         let subscriber = tracing_subscriber::fmt()
             .with_writer(non_blocking)
             .with_ansi(false)
+            .with_span_events(FmtSpan::CLOSE)
             .with_env_filter(
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
             )
@@ -180,6 +182,8 @@ async fn run<'a>(
             let _processing_span = tracing::info_span!("message_processing").entered();
             let all_messages = match app.stream {
                 BusType::Session | BusType::System => {
+                    let _message_collection_span =
+                        tracing::info_span!("message_collection_single_bus").entered();
                     app.messages.get(&app.stream).unwrap().lock().await.clone()
                 }
 
@@ -187,15 +191,22 @@ async fn run<'a>(
                     let mut combined_messages: Vec<Item> = Vec::new();
 
                     if let Some(session_arc) = app.messages.get(&BusType::Session) {
+                        let _session_extend_span =
+                            tracing::info_span!("message_collection_extend_session").entered();
                         combined_messages.extend(session_arc.lock().await.iter().cloned());
                     }
 
                     if let Some(system_arc) = app.messages.get(&BusType::System) {
+                        let _system_extend_span =
+                            tracing::info_span!("message_collection_extend_system").entered();
                         combined_messages.extend(system_arc.lock().await.iter().cloned());
                     }
 
-                    combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-
+                    {
+                        let _combined_sort_span =
+                            tracing::info_span!("message_collection_combined_sort").entered();
+                        combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                    }
                     combined_messages
                 }
             };
@@ -220,15 +231,15 @@ async fn run<'a>(
 
                             if !app.filter_criteria.is_empty() {
                                 for (field, value) in &app.filter_criteria {
-                                    let item_field_value: String = match field.as_str() {
+                                    let item_field_value: std::borrow::Cow<'_, str> = match field.as_str() {
                                         "sender" => item.sender_display(),
-                                        "member" => item.member.clone(),
-                                        "path" => item.path.clone(),
-                                        "serial" => item.serial.clone(),
-                                        "reply_serial" => item.reply_serial.clone(),
+                                        "member" => item.member.as_str().into(),
+                                        "path" => item.path.as_str().into(),
+                                        "serial" => item.serial.as_str().into(),
+                                        "reply_serial" => item.reply_serial.as_str().into(),
                                         _ => {
                                             passes_field_filters = false;
-                                            String::new()
+                                            "".into() // Return an empty Cow
                                         }
                                     };
                                     if passes_field_filters && !item_field_value.contains(value) {
@@ -362,33 +373,31 @@ async fn run<'a>(
                             ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
                         }
 
-                        let mut spans = vec![
-                            Span::raw(indent),
-                            ticker_span,
-                            Span::raw(" ["),
-                            Span::styled(
-                                timestamp,
-                                if app.show_details {
-                                    Style::default().fg(config.color_timestamp_details)
-                                } else {
-                                    Style::default().fg(config.color_timestamp_normal)
-                                },
-                            ),
-                            Span::raw("]"),
-                            Span::raw(" "),
-                        ];
-
                         let sender_info = item.sender_display();
                         let receiver_info = item.receiver_display();
 
-                        let mut new_spans = vec![];
+                        let mut spans = Vec::with_capacity(15); // Pre-allocate
+                        spans.push(Span::raw(indent));
+                        spans.push(ticker_span);
+                        spans.push(Span::raw(" ["));
+                        spans.push(Span::styled(
+                            timestamp,
+                            if app.show_details {
+                                Style::default().fg(config.color_timestamp_details)
+                            } else {
+                                Style::default().fg(config.color_timestamp_normal)
+                            },
+                        ));
+                        spans.push(Span::raw("]"));
+                        spans.push(Span::raw(" "));
+
                         if item.is_reply {
-                            new_spans.push(Span::raw(" ↩ "));
+                            spans.push(Span::raw(" ↩ "));
                         } else {
-                            new_spans.push(Span::raw("   "));
+                            spans.push(Span::raw("   "));
                         }
 
-                        new_spans.push(Span::styled(
+                        spans.push(Span::styled(
                             sender_info,
                             if app.show_details {
                                 Style::default().fg(config.color_sender_details)
@@ -398,8 +407,8 @@ async fn run<'a>(
                         ));
 
                         if !receiver_info.is_empty() {
-                            new_spans.push(Span::raw(" -> "));
-                            new_spans.push(Span::styled(
+                            spans.push(Span::raw(" -> "));
+                            spans.push(Span::styled(
                                 receiver_info,
                                 if app.show_details {
                                     Style::default().fg(config.color_sender_details)
@@ -409,8 +418,8 @@ async fn run<'a>(
                             ));
                         }
 
-                        new_spans.push(Span::raw(" "));
-                        new_spans.push(Span::styled(
+                        spans.push(Span::raw(" ")); // Space before member
+                        spans.push(Span::styled(
                             item.member.clone(),
                             if app.show_details {
                                 Style::default().fg(config.color_member_details)
@@ -418,8 +427,8 @@ async fn run<'a>(
                                 Style::default().fg(config.color_member_normal)
                             },
                         ));
-                        new_spans.push(Span::raw("@"));
-                        new_spans.push(Span::styled(
+                        spans.push(Span::raw("@"));
+                        spans.push(Span::styled(
                             item.path.clone(),
                             if app.show_details {
                                 Style::default().fg(config.color_path_details)
@@ -427,8 +436,6 @@ async fn run<'a>(
                                 Style::default().fg(config.color_path_normal)
                             },
                         ));
-
-                        spans.extend(new_spans);
 
                         items_to_render.push(ListItem::new(Line::from(spans)));
 
@@ -440,6 +447,7 @@ async fn run<'a>(
             // BUGFIX: Ensure an item is selected by default if the list is not empty
 
             if app.list_state.selected().is_none() && !app.list_items.is_empty() {
+                let _list_selection_span = tracing::info_span!("list_selection_init").entered();
                 app.list_state.select(Some(0));
             }
         }

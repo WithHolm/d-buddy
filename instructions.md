@@ -20,7 +20,7 @@ The application has been recently refactored to support multiple D-Bus streams (
 * NEVER RUN ANY GIT COMMANDS. dont commit any changes
 * dont run cargo clippy 
 * always run cargo check and cargo fmt after code changes
-
+* all tasks are made like : "- {checkbox} [task description}". any indentation under is subtasks for the main task.
 ---
 
 ## Roadmap
@@ -191,3 +191,19 @@ To diagnose and address performance slowdowns with large datasets, a comprehensi
         -   A moving average of the loop time.
         -   The total number of messages currently held in memory.
         -   The cache hit/miss ratio for process information lookups.
+
+
+
+### performance fixes
+
+-   **Optimize `rendering_list` performance**: This area (currently taking tens of µs to a few ms) involves significant string processing and `ratatui` `Span` creation, identified as a potential hotspot, especially with large datasets.
+    -   **Reduce String Allocations/Clones**:
+        -   Explore using `Cow<'_, str>` where feasible in `sender_display`, `receiver_display`, and other string-heavy parts to minimize `String` allocations.
+        -   Review `format!` macros and other string manipulations to reduce intermediate `String` creations.
+    -   [x] **Optimize `ratatui` Text Construction**:
+        -   [x] Consider pre-allocating `Vec<Span>` with an estimated capacity before pushing multiple spans to reduce reallocations.
+        -   [x] Implement conditional `Span` creation: avoid creating `Span`s for empty or non-visible elements.
+    -   **(Advanced) Lazy Rendering**: Investigate rendering only the visible `ListItem`s within the scroll viewport rather than all filtered and sorted items, especially when dealing with extremely large message sets.
+-   [x] Add more granular tracing to `run:main_loop`: The most critical next step is to identify what part of the run:main_loop is consuming the majority of the unaccounted ~240-250ms. This will involve adding additional tracing::info_span! macros to other significant code blocks within src/main.rs's main loop.
+- [] Implement identified optimizations for `rendering_list`: Proceed with the optimizations already suggested in instructions.md, specifically focusing on Cow<'_, str> for string handling and pre-allocating Vec<Span> for ratatui Text Construction.
+- [] Investigate `get_process_info` call patterns: Determine how frequently get_process_info is invoked within a single main_loop iteration. Even if individual calls are fast (microseconds), frequent calls could lead to significant cumulative overhead.

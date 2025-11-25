@@ -59,27 +59,27 @@ impl Default for Item {
 }
 
 impl Item {
-    pub fn sender_display(&self) -> String {
+    pub fn sender_display(&self) -> std::borrow::Cow<'_, str> {
         if self.app_name != "Unknown" && self.pid.is_some() {
-            format!("{}:{}", self.app_name, self.pid.unwrap_or(0))
+            format!("{}:{}", self.app_name, self.pid.unwrap_or(0)).into()
         } else {
-            self.sender.clone()
+            self.sender.as_str().into()
         }
     }
 
-    pub fn receiver_display(&self) -> String {
+    pub fn receiver_display(&self) -> std::borrow::Cow<'_, str> {
         if !self.receiver.is_empty() {
             if self.receiver_app_name != "Unknown" && self.receiver_pid.is_some() {
                 format!(
                     "{}:{}",
                     self.receiver_app_name,
                     self.receiver_pid.unwrap_or(0)
-                )
+                ).into()
             } else {
-                self.receiver.clone()
+                self.receiver.as_str().into()
             }
         } else {
-            String::new()
+            "".into() // Return an empty Cow::Borrowed("")
         }
     }
 }

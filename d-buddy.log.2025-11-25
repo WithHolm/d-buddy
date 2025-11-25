@@ -1,4 +1,0 @@
-2025-11-25T15:11:02.047312Z  INFO d_buddy: Starting d-buddy...
-2025-11-25T15:11:02.047459Z  INFO d_buddy: App path: /home/phil/git/me/d-buddy/target/debug/d-buddy
-2025-11-25T15:11:02.047478Z  INFO d_buddy: Args: Args { check: false, log: true }
-2025-11-25T15:11:02.047493Z  INFO d_buddy: Log level: d_buddy=trace
