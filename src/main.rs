@@ -10,22 +10,18 @@ use state::{App, Mode};
 // Import necessary crates and modules
 use anyhow::Result; // For simplified error handling
 use arboard::Clipboard; // For clipboard access
-use chrono::{DateTime, Local};
 
 use clap::Parser;
 use crossterm::event::EventStream;
 use futures::stream::StreamExt; // For extending stream functionality, used with zbus MessageStream
 use ratatui::prelude::*;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::ListItem;
 
 // UI widgets
-use bus::{BusType, GroupingType, Item};
+use bus::{BusType, Item};
 use std::{
     env,
     io::{self, stdout},
     time::Duration,
-    borrow::Cow, // Add this line
 };
 
 use tracing::instrument;
@@ -78,6 +74,7 @@ async fn main() -> Result<()> {
     let config = Config::default();
 
     let mut app = App::default();
+    app.initialize_static_ui_elements(&config);
     let session_messages = bus::dbus_listener(BusType::Session).await?;
     let system_messages = bus::dbus_listener(BusType::System).await?;
     app.messages.insert(BusType::Session, session_messages);
@@ -149,16 +146,16 @@ fn get_fading_color(base_color: Color, elapsed_seconds: u64, total_seconds: u64)
 
 // The main application event loop, now fully asynchronous
 #[instrument(skip_all)]
-async fn run<'a>(
+async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App<'a>,
+    app: &mut App,
     config: &Config,
 ) -> Result<()> {
     let mut event_stream = EventStream::new();
 
     let mut clipboard = Clipboard::new().unwrap();
 
-    let tick_rate = Duration::from_millis(250);
+    let tick_rate = Duration::from_millis(30);
 
     loop {
         let _main_loop_span = tracing::info_span!("main_loop").entered();
@@ -231,17 +228,18 @@ async fn run<'a>(
 
                             if !app.filter_criteria.is_empty() {
                                 for (field, value) in &app.filter_criteria {
-                                    let item_field_value: std::borrow::Cow<'_, str> = match field.as_str() {
-                                        "sender" => item.sender_display(),
-                                        "member" => item.member.as_str().into(),
-                                        "path" => item.path.as_str().into(),
-                                        "serial" => item.serial.as_str().into(),
-                                        "reply_serial" => item.reply_serial.as_str().into(),
-                                        _ => {
-                                            passes_field_filters = false;
-                                            "".into() // Return an empty Cow
-                                        }
-                                    };
+                                    let item_field_value: std::borrow::Cow<'_, str> =
+                                        match field.as_str() {
+                                            "sender" => item.sender_display(),
+                                            "member" => item.member.as_str().into(),
+                                            "path" => item.path.as_str().into(),
+                                            "serial" => item.serial.as_str().into(),
+                                            "reply_serial" => item.reply_serial.as_str().into(),
+                                            _ => {
+                                                passes_field_filters = false;
+                                                "".into() // Return an empty Cow
+                                            }
+                                        };
                                     if passes_field_filters && !item_field_value.contains(value) {
                                         passes_field_filters = false;
 
@@ -292,168 +290,30 @@ async fn run<'a>(
                 });
             }
 
-            let mut last_group_keys_composite: Option<String> = None;
 
-            let now = Local::now(); // Get current time once per loop iteration
-            {
-                let _render_span = tracing::info_span!("rendering_list").entered();
-                app.list_items = app
-                    .filtered_and_sorted_items
-                    .iter()
-                    .flat_map(|item| {
-                        let mut items_to_render = Vec::new();
-                        let mut current_group_keys_vec = Vec::new();
-                        let mut is_grouped = false;
-
-                        for key in &app.grouping_keys {
-                            if key == &bus::GroupingType::None {
-                                continue;
-                            }
-                            is_grouped = true;
-                            let group_component = match key {
-                                bus::GroupingType::Sender => item.app_name.clone(),
-                                bus::GroupingType::Member => item.member.clone(),
-                                bus::GroupingType::Path => item.path.clone(),
-                                bus::GroupingType::Serial => item.serial.clone(),
-                                bus::GroupingType::None => unreachable!(),
-                            };
-                            current_group_keys_vec.push(group_component);
-                        }
-                        let current_group_keys_composite = current_group_keys_vec.join("::");
-
-                        if is_grouped
-                            && last_group_keys_composite.as_ref()
-                                != Some(&current_group_keys_composite)
-                        {
-                            let header_spans = vec![Span::styled(
-                                current_group_keys_composite.clone(),
-                                Style::default().fg(config.color_grouping_header).bold(),
-                            )];
-                            items_to_render.push(ListItem::new(Line::from(header_spans)));
-                            last_group_keys_composite = Some(current_group_keys_composite);
-                        }
-
-                        let indent = if is_grouped { "  " } else { "" };
-                        let dt: DateTime<Local> = item.timestamp.into();
-                        let timestamp = if app.use_relative_time {
-                            let duration = now.signed_duration_since(dt).abs();
-                            if duration.num_seconds() < 60 {
-                                if duration.num_seconds() < 10 {
-                                    format!("{}s", duration.num_seconds())
-                                } else {
-                                    format!("{}+s", (duration.num_seconds() / 10) * 10)
-                                }
-                            } else if duration.num_minutes() < 60 {
-                                format!("{}m", duration.num_minutes())
-                            } else if duration.num_hours() < 24 {
-                                format!("{}h", duration.num_hours())
-                            } else if duration.num_days() < 365 {
-                                format!("{}d", duration.num_days())
-                            } else {
-                                format!("{}y", duration.num_days() / 365)
-                            }
-                        } else {
-                            dt.format("%H:%M:%S%.3f").to_string()
-                        };
-
-                        let elapsed_seconds =
-                            now.signed_duration_since(dt).num_seconds().max(0) as u64;
-                        let total_fade_seconds = 60;
-                        let ticker_color = if elapsed_seconds < total_fade_seconds {
-                            get_fading_color(
-                                config.color_ticker,
-                                elapsed_seconds,
-                                total_fade_seconds,
-                            )
-                        } else {
-                            Color::DarkGray
-                        };
-                        let mut ticker_span = Span::raw("");
-                        if app.enable_lighting_strike {
-                            ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
-                        }
-
-                        let sender_info = item.sender_display();
-                        let receiver_info = item.receiver_display();
-
-                        let mut spans = Vec::with_capacity(15); // Pre-allocate
-                        spans.push(Span::raw(indent));
-                        spans.push(ticker_span);
-                        spans.push(Span::raw(" ["));
-                        spans.push(Span::styled(
-                            timestamp,
-                            if app.show_details {
-                                Style::default().fg(config.color_timestamp_details)
-                            } else {
-                                Style::default().fg(config.color_timestamp_normal)
-                            },
-                        ));
-                        spans.push(Span::raw("]"));
-                        spans.push(Span::raw(" "));
-
-                        if item.is_reply {
-                            spans.push(Span::raw(" ↩ "));
-                        } else {
-                            spans.push(Span::raw("   "));
-                        }
-
-                        spans.push(Span::styled(
-                            sender_info,
-                            if app.show_details {
-                                Style::default().fg(config.color_sender_details)
-                            } else {
-                                Style::default().fg(config.color_sender_normal)
-                            },
-                        ));
-
-                        if !receiver_info.is_empty() {
-                            spans.push(Span::raw(" -> "));
-                            spans.push(Span::styled(
-                                receiver_info,
-                                if app.show_details {
-                                    Style::default().fg(config.color_sender_details)
-                                } else {
-                                    Style::default().fg(config.color_sender_normal)
-                                },
-                            ));
-                        }
-
-                        spans.push(Span::raw(" ")); // Space before member
-                        spans.push(Span::styled(
-                            item.member.clone(),
-                            if app.show_details {
-                                Style::default().fg(config.color_member_details)
-                            } else {
-                                Style::default().fg(config.color_member_normal)
-                            },
-                        ));
-                        spans.push(Span::raw("@"));
-                        spans.push(Span::styled(
-                            item.path.clone(),
-                            if app.show_details {
-                                Style::default().fg(config.color_path_details)
-                            } else {
-                                Style::default().fg(config.color_path_normal)
-                            },
-                        ));
-
-                        items_to_render.push(ListItem::new(Line::from(spans)));
-
-                        items_to_render
-                    })
-                    .collect();
-            }
 
             // BUGFIX: Ensure an item is selected by default if the list is not empty
 
-            if app.list_state.selected().is_none() && !app.list_items.is_empty() {
+            if app.list_state.selected().is_none() && !app.filtered_and_sorted_items.is_empty() {
                 let _list_selection_span = tracing::info_span!("list_selection_init").entered();
                 app.list_state.select(Some(0));
             }
         }
         {
             let _draw_span = tracing::info_span!("drawing_ui").entered();
-            terminal.draw(|f| ui::ui(f, app, config, session_count, system_count, both_count))?;
+            terminal.draw(|f| {
+                let temp_filtered_items = std::mem::take(&mut app.filtered_and_sorted_items);
+                ui::ui(
+                    f,
+                    app,
+                    config,
+                    session_count,
+                    system_count,
+                    both_count,
+                    &temp_filtered_items[..],
+                );
+                app.filtered_and_sorted_items = temp_filtered_items;
+            })?;
         }
         let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 

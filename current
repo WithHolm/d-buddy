@@ -1,11 +1,7 @@
-Task: Look up and display application path and PID for D-Bus messages.
-
-Steps:
-1.  Modify `bus::Item` struct to include `pid: Option<u32>`, `app_name: String`, `app_path: String`, and `app_args: Vec<String>`.
-2.  Update `bus::dbus_listener` to:
-    *   Get the sender's PID using `org.freedesktop.DBus.GetConnectionUnixProcessID` via a D-Bus call.
-    *   Read `/proc/<pid>/cmdline` to get the application path and arguments.
-    *   Populate the new fields in the `Item` struct.
-3.  Modify `main.rs` to display `"{appname} (pid)"` in the message list items.
-4.  Modify `event.rs` (`update_detail_text`) to display `full path + any arguments if present` in the details view.
-5.  Run `cargo check` and `cargo fmt` after each major change.
+- [completed] Add more granular tracing to `run:main_loop`: The most critical next step is to identify what part of the run:main_loop is consuming the majority of the unaccounted ~240-250ms. This will involve adding additional tracing::info_span! macros to other significant code blocks within src/main.rs's main loop.
+- [completed] Implement identified optimizations for `rendering_list`: Proceed with the optimizations already suggested in instructions.md, specifically focusing on Cow<'_, str> for string handling and pre-allocating Vec<Span> for ratatui Text Construction.
+- [completed] Investigate `get_process_info` call patterns: Determine how frequently get_process_info is invoked within a single main_loop iteration. Even if individual calls are fast (microseconds), frequent calls could lead to significant cumulative overhead.
+- [completed] Run the application with logging enabled to generate new logs with granular tracing.
+- [completed] Analyze the new log file to identify bottlenecks within the `main_loop`.
+- [in_progress] Implement lazy rendering for `ListItem`s: Only generate and render visible items within the scroll viewport.
+- [pending] Measure the performance improvement after implementing lazy rendering.

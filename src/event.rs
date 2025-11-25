@@ -6,6 +6,7 @@ use arboard::Clipboard;
 use crossterm::event::{Event, KeyCode};
 use ratatui::prelude::*;
 use ratatui::text::{Line, Span, Text};
+
 use std::time::Duration;
 use tokio::fs;
 use tui_input::{backend::crossterm as input_backend, Input};
@@ -14,7 +15,7 @@ use zbus::zvariant::{Structure, Value};
 use tokio::time::sleep;
 
 pub async fn handle_event(
-    app: &mut App<'_>,
+    app: &mut App,
     config: &Config,
     event: Event,
     clipboard: &mut Clipboard,
@@ -32,7 +33,7 @@ pub async fn handle_event(
                             return Ok(true);
                         }
                         app.show_details = false;
-                    }
+                    },
                     KeyCode::Tab => {
                         app.stream = match app.stream {
                             BusType::Session => BusType::System,
@@ -40,10 +41,10 @@ pub async fn handle_event(
                             BusType::Both => BusType::Session,
                         };
                         app.list_state.select(None); // Reset selection
-                    }
+                    },
                     KeyCode::Char('t') => {
                         app.use_relative_time = !app.use_relative_time;
-                    }
+                    },
                     KeyCode::Char('x') => {
                         if let Some(selected) = app.list_state.selected() {
                             if let Some(item) = app.filtered_and_sorted_items.get(selected) {
@@ -51,18 +52,18 @@ pub async fn handle_event(
                                 app.mode = Mode::ThreadView;
                             }
                         }
-                    }
+                    },
                     KeyCode::Char('g') => {
                         app.mode = Mode::GroupingSelection;
                         if app.grouping_selection_state.selected().is_none() {
                             app.grouping_selection_state.select(Some(0));
                         }
-                        // app.mode = Mode::GroupingSelection; // Enter grouping selection mode
-                        // app.grouping_selection_state.select(Some(0)); // Select first item by default
-                    }
-                    KeyCode::Char('f') => app.mode = Mode::Filtering,
+                    },
+                    KeyCode::Char('f') => {
+                        app.mode = Mode::Filtering;
+                    },
                     KeyCode::Up => {
-                        if !app.list_items.is_empty() {
+                        if !app.filtered_and_sorted_items.is_empty() {
                             let i = match app.list_state.selected() {
                                 Some(i) => i.saturating_sub(1),
                                 None => 0,
@@ -72,11 +73,11 @@ pub async fn handle_event(
                                 update_detail_text(app, config);
                             }
                         }
-                    }
+                    },
                     KeyCode::Down => {
-                        if !app.list_items.is_empty() {
+                        if !app.filtered_and_sorted_items.is_empty() {
                             let i = match app.list_state.selected() {
-                                Some(i) => (i + 1).min(app.list_items.len() - 1),
+                                Some(i) => (i + 1).min(app.filtered_and_sorted_items.len() - 1),
                                 None => 0,
                             };
                             app.list_state.select(Some(i));
@@ -84,7 +85,7 @@ pub async fn handle_event(
                                 update_detail_text(app, config);
                             }
                         }
-                    }
+                    },
                     KeyCode::Char('s') | KeyCode::Char(' ') => {
                         if app.show_details {
                             app.show_details = false;
@@ -92,12 +93,12 @@ pub async fn handle_event(
                             update_detail_text(app, config);
                             app.show_details = true;
                         }
-                    }
+                    },
                     KeyCode::Esc => {
                         if app.show_details {
                             app.show_details = false;
                         }
-                    }
+                    },
                     KeyCode::Char('r') => {
                         if let Some(selected) = app.list_state.selected() {
                             if let Some(item) = app.filtered_and_sorted_items.get(selected) {
@@ -122,7 +123,7 @@ pub async fn handle_event(
                                 }
                             }
                         }
-                    }
+                    },
                     KeyCode::Char('c') => {
                         if app.show_details {
                             let text_to_copy_text = app.detail_text.clone();
@@ -143,27 +144,27 @@ pub async fn handle_event(
                             app.status_message =
                                 format!("{} | {}", file_write_status, clipboard_status);
                         }
-                    }
+                    },
                     KeyCode::Char('j') => {
                         if app.show_details {
                             app.detail_scroll_request = Some(1);
                         }
-                    }
+                    },
                     KeyCode::Char('k') => {
                         if app.show_details {
                             app.detail_scroll_request = Some(-1);
                         }
-                    }
+                    },
                     KeyCode::PageDown => {
                         if app.show_details {
                             app.detail_scroll_request = Some(10);
                         }
-                    }
+                    },
                     KeyCode::PageUp => {
                         if app.show_details {
                             app.detail_scroll_request = Some(-10);
                         }
-                    }
+                    },
                     _ => {} // Ignore other keys
                 }
             }
@@ -324,13 +325,13 @@ pub async fn handle_event(
                                     app.filtered_and_sorted_items.get(selected_message_index)
                                 {
                                     let field_name = autofilter_options[selected_option_index];
-                                    let field_value: String = match field_name {
+                                    let field_value: std::borrow::Cow<'_, str> = match field_name {
                                         "sender" => item.sender_display(),
-                                        "member" => item.member.clone(),
-                                        "path" => item.path.clone(),
-                                        "serial" => item.serial.clone(),
-                                        "reply_serial" => item.reply_serial.clone(),
-                                        _ => String::new(),
+                                        "member" => item.member.as_str().into(),
+                                        "path" => item.path.as_str().into(),
+                                        "serial" => item.serial.as_str().into(),
+                                        "reply_serial" => item.reply_serial.as_str().into(),
+                                        _ => "".into(),
                                     };
                                     app.input =
                                         Input::from(format!("{}={}", field_name, field_value));
@@ -362,7 +363,7 @@ pub async fn handle_event(
 }
 
 /// A helper function to generate the detail text for the currently selected message.
-fn update_detail_text(app: &mut App<'_>, config: &Config) {
+fn update_detail_text(app: &mut App, config: &Config) {
     if let Some(selected) = app.list_state.selected() {
         if let Some(item) = app.filtered_and_sorted_items.get(selected) {
             let mut header_lines: Vec<Line> = Vec::new();
@@ -370,7 +371,7 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
             let recipient_info = if item.receiver.is_empty() {
                 String::new()
             } else {
-                format!(" -> {}", item.receiver_display())
+                format!(" -> {}", item.receiver_display().into_owned())
             };
             let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
                 format!("->{}", item.reply_serial)
@@ -380,7 +381,7 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
 
             header_lines.push(Line::from(vec![
                 Span::styled(
-                    item.sender_display(),
+                    item.sender_display().into_owned(),
                     Style::default().fg(config.color_sender_normal),
                 ),
                 Span::raw(recipient_info),

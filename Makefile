@@ -1,5 +1,16 @@
 .PHONY: build run clean
 
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Linux)
+    # OK
+else
+    $(error This Makefile can only be run on Linux)
+endif
+
+ai-check:
+	cargo check && cargo fmt && cargo clippy
+
 build:
 	cargo build
 

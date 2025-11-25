@@ -74,7 +74,8 @@ impl Item {
                     "{}:{}",
                     self.receiver_app_name,
                     self.receiver_pid.unwrap_or(0)
-                ).into()
+                )
+                .into()
             } else {
                 self.receiver.as_str().into()
             }

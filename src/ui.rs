@@ -1,24 +1,26 @@
 use super::{App, Config, Mode};
-use crate::bus::{BusType, GroupingType};
+use crate::bus;
 use ratatui::{
     prelude::*,
     text::{Line, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+
+use std::borrow::Cow;
 use zbus::zvariant::Value;
 
 // Draws the application's user interface
-pub fn ui<'a>(
+pub fn ui(
     frame: &mut Frame,
-    app: &mut App<'a>,
+    app: &mut App,
     config: &Config,
     session_count: usize,
     system_count: usize,
     both_count: usize,
+    filtered_items: &[crate::bus::Item],
 ) {
     if frame.area().width < app.min_width || frame.area().height < app.min_height {
-        let message = "Console is too small to display the application (q to quit)";
-        let paragraph = Paragraph::new(message)
+        let paragraph = Paragraph::new(app.cached_console_too_small_message.as_ref().unwrap().clone())
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
         let area = centered_rect(60, 20, frame.area());
@@ -38,21 +40,18 @@ pub fn ui<'a>(
         .constraints([Constraint::Percentage(100)].as_ref())
         .split(chunks[0]);
 
-    let items = app.list_items.clone();
-
-    // Create the List widget for displaying D-Bus messages
     let (session_style, system_style, both_style) = match app.stream {
-        BusType::Session => (
+        crate::bus::BusType::Session => (
             Style::default().fg(config.color_stream_session).bold(),
             Style::default().fg(config.color_keybind_text).italic(),
             Style::default().fg(config.color_keybind_text).italic(),
         ),
-        BusType::System => (
+        crate::bus::BusType::System => (
             Style::default().fg(config.color_keybind_text).italic(),
             Style::default().fg(config.color_stream_system).bold(),
             Style::default().fg(config.color_keybind_text).italic(),
         ),
-        BusType::Both => (
+        crate::bus::BusType::Both => (
             Style::default().fg(config.color_keybind_text).italic(),
             Style::default().fg(config.color_keybind_text).italic(),
             Style::default().fg(config.color_stream_session).bold(), // Reusing session color for "Both" active
@@ -69,7 +68,183 @@ pub fn ui<'a>(
         Span::raw("]"),
     ]);
 
-    let list = List::new(items)
+
+
+    // Calculate the visible height of the list area
+    let list_area_height = main_chunks[0].height as usize;
+
+    // Adjust list state to keep selected item in view
+    let selected_index = app.list_state.selected().unwrap_or(0);
+    let num_filtered_items = filtered_items.len();
+
+    if num_filtered_items > 0 {
+        // Adjust selected_index to ensure it's within bounds after filtering/sorting
+        if selected_index >= num_filtered_items {
+            app.list_state.select(Some(num_filtered_items - 1));
+        }
+    } else {
+        app.list_state.select(None);
+    }
+
+    let offset = app.list_state.offset();
+    let end_offset = (offset + list_area_height).min(num_filtered_items);
+
+    let visible_items: Vec<ListItem> = if num_filtered_items > 0 {
+        let _list_item_generation_span =
+            tracing::info_span!("list_item_generation").entered();
+        // This is the core of lazy rendering: only process visible items
+        let now = chrono::Local::now(); // Get current time once per loop iteration for ticker
+        let mut last_group_keys_composite: Option<String> = None;
+
+        filtered_items[offset..end_offset]
+            .iter()
+            .flat_map(|item| {
+                let mut items_to_render = Vec::new();
+                let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
+                let mut is_grouped = false;
+
+
+                for key in &app.grouping_keys {
+                    if key == &crate::bus::GroupingType::None {
+                        continue;
+                    }
+                    is_grouped = true;
+                    let group_component: Cow<'_, str> = match key {
+                        crate::bus::GroupingType::Sender => item.app_name.as_str().into(),
+                        crate::bus::GroupingType::Member => item.member.as_str().into(),
+                        crate::bus::GroupingType::Path => item.path.as_str().into(),
+                        crate::bus::GroupingType::Serial => item.serial.as_str().into(),
+                        crate::bus::GroupingType::None => unreachable!(),
+                    };
+                    current_group_keys_vec.push(group_component);
+                }
+                let current_group_keys_composite = current_group_keys_vec.join("::");
+
+                if is_grouped
+                    && last_group_keys_composite.as_ref() != Some(&current_group_keys_composite)
+                {
+                    let header_spans = vec![Span::styled(
+                        current_group_keys_composite.clone(),
+                        Style::default().fg(config.color_grouping_header).bold(),
+                    )];
+                    items_to_render.push(ListItem::new(Line::from(header_spans)));
+                    last_group_keys_composite = Some(current_group_keys_composite);
+                }
+
+                let indent = if is_grouped { "  " } else { "" };
+                let dt: chrono::DateTime<chrono::Local> = item.timestamp.into();
+                let timestamp = if app.use_relative_time {
+                    let duration = now.signed_duration_since(dt).abs();
+                    if duration.num_seconds() < 60 {
+                        if duration.num_seconds() < 10 {
+                            format!("{}s", duration.num_seconds())
+                        } else {
+                            format!("{}+s", (duration.num_seconds() / 10) * 10)
+                        }
+                    } else if duration.num_minutes() < 60 {
+                        format!("{}m", duration.num_minutes())
+                    } else if duration.num_hours() < 24 {
+                        format!("{}h", duration.num_hours())
+                    } else if duration.num_days() < 365 {
+                        format!("{}d", duration.num_days())
+                    } else {
+                        format!("{}y", duration.num_days() / 365)
+                    }
+                } else {
+                    dt.format("%H:%M:%S%.3f").to_string()
+                };
+
+                let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
+                let total_fade_seconds = 60;
+                let ticker_color = if elapsed_seconds < total_fade_seconds {
+                    super::get_fading_color(
+                        config.color_ticker,
+                        elapsed_seconds,
+                        total_fade_seconds,
+                    )
+                } else {
+                    Color::DarkGray
+                };
+                let mut ticker_span = Span::raw("");
+                if app.enable_lighting_strike {
+                    ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
+                }
+
+                let sender_info = item.sender_display();
+                let receiver_info = item.receiver_display();
+
+                let mut spans = Vec::with_capacity(15); // Pre-allocate
+                spans.push(Span::raw(indent));
+                spans.push(ticker_span);
+                spans.push(Span::raw(" ["));
+                spans.push(Span::styled(
+                    timestamp,
+                    if app.show_details {
+                        Style::default().fg(config.color_timestamp_details)
+                    } else {
+                        Style::default().fg(config.color_timestamp_normal)
+                    },
+                ));
+                spans.push(Span::raw("]"));
+                spans.push(Span::raw(" "));
+
+                if item.is_reply {
+                    spans.push(Span::raw(" ↩ "));
+                } else {
+                    spans.push(Span::raw("   "));
+                }
+
+                spans.push(Span::styled(
+                    sender_info.into_owned(),
+                    if app.show_details {
+                        Style::default().fg(config.color_sender_details)
+                    } else {
+                        Style::default().fg(config.color_sender_normal)
+                    },
+                ));
+
+                if !receiver_info.is_empty() {
+                    spans.push(Span::raw(" -> "));
+                    spans.push(Span::styled(
+                        receiver_info.into_owned(),
+                        if app.show_details {
+                            Style::default().fg(config.color_sender_details)
+                        } else {
+                            Style::default().fg(config.color_sender_normal)
+                        },
+                    ));
+                }
+
+                spans.push(Span::raw(" ")); // Space before member
+                spans.push(Span::styled(
+                    item.member.as_str(),
+                    if app.show_details {
+                        Style::default().fg(config.color_member_details)
+                    } else {
+                        Style::default().fg(config.color_member_normal)
+                    },
+                ));
+                spans.push(Span::raw("@"));
+                spans.push(Span::styled(
+                    item.path.as_str(),
+                    if app.show_details {
+                        Style::default().fg(config.color_path_details)
+                    } else {
+                        Style::default().fg(config.color_path_normal)
+                    },
+                ));
+
+                items_to_render.push(ListItem::new(Line::from(spans)));
+
+                items_to_render
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Create the List widget for displaying D-Bus messages
+    let list = List::new(visible_items)
         .block(
             Block::default()
                 .title(title_spans) // Set title for the block
@@ -147,13 +322,13 @@ pub fn ui<'a>(
         if let Some(selected_index) = app.list_state.selected() {
             if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
                 for &option in autofilter_options.iter() {
-                    let example_value: String = match option {
+                    let example_value: std::borrow::Cow<'_, str> = match option {
                         "sender" => item.sender_display(),
-                        "member" => item.member.clone(),
-                        "path" => item.path.clone(),
-                        "serial" => item.serial.clone(),
-                        "reply_serial" => item.reply_serial.clone(),
-                        _ => String::new(),
+                        "member" => item.member.as_str().into(),
+                        "path" => item.path.as_str().into(),
+                        "serial" => item.serial.as_str().into(),
+                        "reply_serial" => item.reply_serial.as_str().into(),
+                        _ => "".into(),
                     };
                     list_items.push(ListItem::new(Line::from(vec![
                         Span::raw(format!("{}: ", option)),
@@ -224,14 +399,7 @@ pub fn ui<'a>(
     // Render the appropriate keybinds/status in the bottom chunk based on the current mode
     match app.mode {
         Mode::Filtering => {
-            let key_hints = Line::from(vec![
-                "Esc".bold().fg(config.color_keybind_key),
-                ": clear | ".into(),
-                "Enter".bold().fg(config.color_keybind_key),
-                ": apply | ".into(),
-                "Tab".bold().fg(config.color_keybind_key),
-                ": autofilter".into(),
-            ]);
+            let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
             let help_paragraph = Paragraph::new(key_hints)
                 .block(Block::default().borders(Borders::ALL).title("Keys"));
             frame.render_widget(help_paragraph, chunks[1]);
@@ -240,79 +408,32 @@ pub fn ui<'a>(
             let help_text = if !app.status_message.is_empty() {
                 Line::from(app.status_message.as_str().fg(config.color_status_message))
             } else if app.show_details {
-                Line::from(vec![
-                    "c".bold().fg(config.color_keybind_key),
-                    ": copy | ".into(),
-                    "s".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "esc".bold().fg(config.color_keybind_key),
-                    ": close | ".into(),
-                    "j".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "k".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "PgUp".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "PgDn".bold().fg(config.color_keybind_key),
-                    ": scroll".into(),
-                ])
+                app.cached_normal_details_key_hints.as_ref().unwrap().clone()
             } else {
-                Line::from(vec![
-                    "q".bold().fg(config.color_keybind_key),
-                    ": quit | ".into(),
-                    "Tab".bold().fg(config.color_keybind_key),
-                    ": view | ".into(),
-                    "t".bold().fg(config.color_keybind_key),
-                    ": time | ".into(),
-                    "f".bold().fg(config.color_keybind_key),
-                    ": filter | ".into(),
-                    "g".bold().fg(config.color_keybind_key),
-                    ": group | ".into(),
-                    "r".bold().fg(config.color_keybind_key),
-                    ": reply | ".into(),
-                    "x".bold().fg(config.color_keybind_key),
-                    ": clear | ".into(),
-                    "s".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "space".bold().fg(config.color_keybind_key),
-                    ": details | ".into(),
-                    "↑".bold().fg(config.color_keybind_key),
-                    "/".dim(),
-                    "↓".bold().fg(config.color_keybind_key),
-                    ": navigate".into(),
-                ])
+                app.cached_normal_key_hints.as_ref().unwrap().clone()
             };
             let help_paragraph = Paragraph::new(help_text)
                 .block(Block::default().borders(Borders::ALL).title("Keys"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::AutoFilterSelection => {
-            let help_paragraph = Paragraph::new(Line::from(vec![
-                "Esc".bold().fg(config.color_keybind_key),
-                ": cancel | ".into(),
-                "Enter".bold().fg(config.color_keybind_key),
-                ": select | ".into(),
-                "↑".bold().fg(config.color_keybind_key),
-                "/".dim(),
-                "↓".bold().fg(config.color_keybind_key),
-                ": navigate".into(),
-            ]))
+            let help_paragraph = Paragraph::new(app.cached_autofilter_selection_key_hints.as_ref().unwrap().clone())
             .block(Block::default().borders(Borders::ALL).title("Autofilter"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::ThreadView => {
             let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
-            let help_paragraph = Paragraph::new(Line::from(vec![
+            let mut thread_view_line = Line::from(vec![
                 Span::raw("Thread View (Serial: "),
                 Span::styled(
                     thread_serial_display,
                     Style::default().fg(config.color_thread_serial),
                 ),
                 Span::raw(") | "),
-                "Esc".bold().fg(config.color_keybind_key),
-                ": exit thread view".into(),
-            ]))
-            .block(Block::default().borders(Borders::ALL).title("Thread View"));
+            ]);
+            thread_view_line.extend(app.cached_thread_view_key_hints.as_ref().unwrap().clone());
+            let help_paragraph = Paragraph::new(thread_view_line)
+                .block(Block::default().borders(Borders::ALL).title("Thread View"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
@@ -397,6 +518,53 @@ pub fn ui<'a>(
                 );
 
             frame.render_stateful_widget(list, inner_area, &mut app.grouping_selection_state);
+        }
+    }
+
+    // Render the appropriate keybinds/status in the bottom chunk based on the current mode
+    match app.mode {
+        Mode::Filtering => {
+            let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
+            let help_paragraph = Paragraph::new(key_hints)
+                .block(Block::default().borders(Borders::ALL).title("Keys"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::Normal => {
+            let help_text = if !app.status_message.is_empty() {
+                Line::from(app.status_message.as_str().fg(config.color_status_message))
+            } else if app.show_details {
+                app.cached_normal_details_key_hints.as_ref().unwrap().clone()
+            } else {
+                app.cached_normal_key_hints.as_ref().unwrap().clone()
+            };
+            let help_paragraph = Paragraph::new(help_text)
+                .block(Block::default().borders(Borders::ALL).title("Keys"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::AutoFilterSelection => {
+            let help_paragraph = Paragraph::new(app.cached_autofilter_selection_key_hints.as_ref().unwrap().clone())
+            .block(Block::default().borders(Borders::ALL).title("Autofilter"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::ThreadView => {
+            let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
+            let mut thread_view_line = Line::from(vec![
+                Span::raw("Thread View (Serial: "),
+                Span::styled(
+                    thread_serial_display,
+                    Style::default().fg(config.color_thread_serial),
+                ),
+                Span::raw(") | "),
+            ]);
+            thread_view_line.extend(app.cached_thread_view_key_hints.as_ref().unwrap().clone());
+            let help_paragraph = Paragraph::new(thread_view_line)
+                .block(Block::default().borders(Borders::ALL).title("Thread View"));
+            frame.render_widget(help_paragraph, chunks[1]);
+        }
+        Mode::GroupingSelection => {
+            let help_paragraph = Paragraph::new(app.cached_grouping_selection_key_hints.as_ref().unwrap().clone())
+                .block(Block::default().borders(Borders::ALL).title("Grouping"));
+            frame.render_widget(help_paragraph, chunks[1]);
         }
     }
 }
