@@ -114,3 +114,54 @@ This plan outlines the next steps to integrate the new architecture and build ou
 - [x] "lighting strike" ticker besides messages. goes from bright to dark depending on the time (60 sec)
 - [] look up the actual application path + pid sending the message. in detaisl we can show full path + any arguments if present, but in list view we only need to show "{appname} (pid)"
 - [x] revisit application setup, document in /docs about current setup and possible improvements (including new code files to be better organized or alterntiative architecture (keep it high level))
+
+
+### Main view formatting
+
+#### normal list
+currently:    
+```
+[5m] 60496 sender: systemd (pid:1506), member: PropertiesChanged, path: /org/freedesktop/systemd1/unit/omarchy_2dbattery_2dmonitor_2eservice
+```
+
+suggested: 
+``` 
+[timestamp] [reply-glyph if is reply] [sender-app-name:pid-number|sender] [glyph_right_arrow] [receiver-app-name:pid-number|receiver] [member]@[path]
+```
+
+#### grouped list
+as it stands now grouing takes one item (possibly the first in stack) as the "top level" item and then indents all other items under it.
+suggested new grouping:
+```
+[group value]
+   [item without the group value]
+```
+
+what is magical here is that when you are inside a the [group value] is sticky, meaning that it will be displayed even if you scroll up or down the list. 
+if you are in between 2 values, the sticky value will still be shown for the top items:
+example: basic sticky when we have scrolled past the first items in same group..
+```
+{not showed: more items in group 1}
+[group value] [↑...↓]
+   [item without the group value]
+   [item without the group value]
+   [item without the group value]
+{not showed: more items in group 1}
+```
+
+
+exmple: sticky between groups:
+```
+{not showed: more items in group 1}
+[group1 value] (count) [↑...]
+  [item without the group value shown]
+  [item without the group value shown]
+  [item without the group value shown]
+[group2 value] (2)
+  [item without the group2 value shown]
+  [item without the group2 value shown]
+[group3 value] (count) [...↓]
+  [item without the group3 value shown]
+  [item without the group3 value shown]
+{not shown: more items in group 3}
+```

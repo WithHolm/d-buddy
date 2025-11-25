@@ -1,4 +1,4 @@
-use crate::bus::{BusType, Item, GroupingType};
+use crate::bus::{BusType, GroupingType, Item};
 use ratatui::{
     text::Text,
     widgets::{ListItem, ListState},

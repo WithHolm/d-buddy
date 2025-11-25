@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
 // UI widgets
-use bus::{BusType, Item, GroupingType};
+use bus::{BusType, GroupingType, Item};
 use std::{
     io::{self, stdout},
     time::Duration,
@@ -226,7 +226,7 @@ async fn run<'a>(
 
                 for key in &app.grouping_keys {
                     cmp = match key {
-                        bus::GroupingType::Sender => a.sender.cmp(&b.sender),
+                        bus::GroupingType::Sender => a.app_name.cmp(&b.app_name),
 
                         bus::GroupingType::Member => a.member.cmp(&b.member),
 
@@ -256,50 +256,42 @@ async fn run<'a>(
             app.list_items = app
                 .filtered_and_sorted_items
                 .iter()
-                .map(|item| {
+                .flat_map(|item| {
+                    let mut items_to_render = Vec::new();
                     let mut current_group_keys_vec = Vec::new();
-
                     let mut is_grouped = false;
 
                     for key in &app.grouping_keys {
                         if key == &bus::GroupingType::None {
                             continue;
                         }
-
                         is_grouped = true;
-
                         let group_component = match key {
-                            bus::GroupingType::Sender => item.sender.clone(),
-
+                            bus::GroupingType::Sender => item.app_name.clone(),
                             bus::GroupingType::Member => item.member.clone(),
-
                             bus::GroupingType::Path => item.path.clone(),
-
                             bus::GroupingType::Serial => item.serial.clone(),
-
-                            bus::GroupingType::None => unreachable!(), // Handled above
+                            bus::GroupingType::None => unreachable!(),
                         };
-
                         current_group_keys_vec.push(group_component);
                     }
-
                     let current_group_keys_composite = current_group_keys_vec.join("::");
 
-                    let indent = if is_grouped
-                        && last_group_keys_composite.as_ref() == Some(&current_group_keys_composite)
+                    if is_grouped
+                        && last_group_keys_composite.as_ref() != Some(&current_group_keys_composite)
                     {
-                        "  "
-                    } else {
+                        let header_spans = vec![Span::styled(
+                            current_group_keys_composite.clone(),
+                            Style::default().fg(config.color_grouping_header).bold(),
+                        )];
+                        items_to_render.push(ListItem::new(Line::from(header_spans)));
                         last_group_keys_composite = Some(current_group_keys_composite);
+                    }
 
-                        ""
-                    };
-
+                    let indent = if is_grouped { "  " } else { "" };
                     let dt: DateTime<Local> = item.timestamp.into();
-
                     let timestamp = if app.use_relative_time {
-                        let duration = now.signed_duration_since(dt).abs(); // Use `now` here
-
+                        let duration = now.signed_duration_since(dt).abs();
                         if duration.num_seconds() < 60 {
                             if duration.num_seconds() < 10 {
                                 format!("{}s", duration.num_seconds())
@@ -311,28 +303,21 @@ async fn run<'a>(
                         } else if duration.num_hours() < 24 {
                             format!("{}h", duration.num_hours())
                         } else if duration.num_days() < 365 {
-                            // Assuming 365 days in a year for simplicity
-
                             format!("{}d", duration.num_days())
                         } else {
-                            format!("{}y", duration.num_days() / 365) // Rough year calculation
+                            format!("{}y", duration.num_days() / 365)
                         }
                     } else {
                         dt.format("%H:%M:%S%.3f").to_string()
                     };
 
-                    // Ticker logic
-
                     let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
-
-                    let total_fade_seconds = 60; // 60 seconds to fade
-
+                    let total_fade_seconds = 60;
                     let ticker_color = if elapsed_seconds < total_fade_seconds {
                         get_fading_color(config.color_ticker, elapsed_seconds, total_fade_seconds)
                     } else {
-                        Color::DarkGray // Fully faded
+                        Color::DarkGray
                     };
-
                     let mut ticker_span = Span::raw("");
                     if app.enable_lighting_strike {
                         ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
@@ -340,7 +325,7 @@ async fn run<'a>(
 
                     let mut spans = vec![
                         Span::raw(indent),
-                        ticker_span, // Add ticker before timestamp
+                        ticker_span,
                         Span::raw(" ["),
                         Span::styled(
                             timestamp,
@@ -351,62 +336,64 @@ async fn run<'a>(
                             },
                         ),
                         Span::raw("]"),
-                        Span::raw(" "), // Space after timestamp
+                        Span::raw(" "),
                     ];
 
-                    spans.extend(vec![
-                        Span::styled(
-                            item.serial.clone(),
-                            match item.stream_type {
-                                BusType::Session => {
-                                    Style::default().fg(config.color_stream_session)
-                                }
+                    let sender_info = item.sender_display();
+                    let receiver_info = item.receiver_display();
 
-                                BusType::System => Style::default().fg(config.color_stream_system),
+                    let mut new_spans = vec![];
+                    if item.is_reply {
+                        new_spans.push(Span::raw(" ↩ "));
+                    } else {
+                        new_spans.push(Span::raw("   "));
+                    }
 
-                                BusType::Both => Style::default().fg(config.color_timestamp_normal), // Default or neutral color for combined view
-                            },
-                        ),
-                        if item.is_reply && !item.reply_serial.is_empty() {
-                            Span::raw(format!("/ {}", item.reply_serial)) // Add reply_serial if it's a reply
+                    new_spans.push(Span::styled(
+                        sender_info,
+                        if app.show_details {
+                            Style::default().fg(config.color_sender_details)
                         } else {
-                            Span::raw("")
+                            Style::default().fg(config.color_sender_normal)
                         },
-                        if item.is_reply {
-                            Span::raw(" ↩ ")
-                        } else {
-                            Span::raw(" ")
-                        },
-                        Span::raw("sender: "),
-                        Span::styled(
-                            format!("{} (pid:{})", item.app_name, item.pid.unwrap_or(0)),
+                    ));
+
+                    if !receiver_info.is_empty() {
+                        new_spans.push(Span::raw(" -> "));
+                        new_spans.push(Span::styled(
+                            receiver_info,
                             if app.show_details {
                                 Style::default().fg(config.color_sender_details)
                             } else {
                                 Style::default().fg(config.color_sender_normal)
                             },
-                        ),
-                        Span::raw(", member: "),
-                        Span::styled(
-                            item.member.clone(),
-                            if app.show_details {
-                                Style::default().fg(config.color_member_details)
-                            } else {
-                                Style::default().fg(config.color_member_normal)
-                            },
-                        ),
-                        Span::raw(", path: "),
-                        Span::styled(
-                            item.path.clone(),
-                            if app.show_details {
-                                Style::default().fg(config.color_path_details)
-                            } else {
-                                Style::default().fg(config.color_path_normal)
-                            },
-                        ),
-                    ]);
+                        ));
+                    }
 
-                    ListItem::new(Line::from(spans))
+                    new_spans.push(Span::raw(" "));
+                    new_spans.push(Span::styled(
+                        item.member.clone(),
+                        if app.show_details {
+                            Style::default().fg(config.color_member_details)
+                        } else {
+                            Style::default().fg(config.color_member_normal)
+                        },
+                    ));
+                    new_spans.push(Span::raw("@"));
+                    new_spans.push(Span::styled(
+                        item.path.clone(),
+                        if app.show_details {
+                            Style::default().fg(config.color_path_details)
+                        } else {
+                            Style::default().fg(config.color_path_normal)
+                        },
+                    ));
+
+                    spans.extend(new_spans);
+
+                    items_to_render.push(ListItem::new(Line::from(spans)));
+
+                    items_to_render
                 })
                 .collect();
 

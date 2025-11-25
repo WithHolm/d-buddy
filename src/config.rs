@@ -24,6 +24,7 @@ pub struct Config {
     pub color_selection_highlight_fg: Color,
     pub color_autofilter_value: Color,
     pub color_ticker: Color,
+    pub color_grouping_header: Color,
 }
 
 impl Default for Config {
@@ -51,6 +52,7 @@ impl Default for Config {
             color_selection_highlight_fg: Color::Cyan,
             color_autofilter_value: Color::Green,
             color_ticker: Color::Rgb(255, 255, 0),
+            color_grouping_header: Color::Yellow,
         }
     }
 }

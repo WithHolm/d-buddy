@@ -1,4 +1,4 @@
-use crate::bus::{BusType, Item, GroupingType};
+use crate::bus::{BusType, GroupingType, Item};
 use crate::config::Config;
 use crate::state::{App, Mode};
 use anyhow::Result;
@@ -365,22 +365,22 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
             let mut header_lines: Vec<Line> = Vec::new();
 
             let recipient_info = if item.receiver.is_empty() {
-                Span::raw("")
+                String::new()
             } else {
-                Span::raw(format!(" -> {}", item.receiver))
+                format!(" -> {}", item.receiver_display())
             };
             let reply_serial_info = if item.is_reply && !item.reply_serial.is_empty() {
-                Span::raw(format!("->{}", item.reply_serial))
+                format!("->{}", item.reply_serial)
             } else {
-                Span::raw("")
+                String::new()
             };
 
             header_lines.push(Line::from(vec![
                 Span::styled(
-                    item.sender.clone(),
+                    item.sender_display(),
                     Style::default().fg(config.color_sender_normal),
                 ),
-                recipient_info,
+                Span::raw(recipient_info),
                 Span::raw("|"),
                 Span::styled(
                     item.serial.clone(),
@@ -390,7 +390,7 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
                         BusType::Both => Style::default().fg(config.color_timestamp_normal), // Fallback
                     },
                 ),
-                reply_serial_info,
+                Span::raw(reply_serial_info),
                 Span::raw("|"),
                 Span::styled(
                     item.member.clone(),
@@ -406,20 +406,39 @@ fn update_detail_text(app: &mut App<'_>, config: &Config) {
 
             if !item.app_path.is_empty() {
                 header_lines.push(Line::from(vec![
-                    Span::raw("App Path: "),
+                    Span::raw("Sender Path: "),
                     Span::styled(
                         item.app_path.clone(),
-                        Style::default().fg(config.color_path_normal), // Reusing path color for consistency
+                        Style::default().fg(config.color_path_normal),
                     ),
                 ]));
             }
 
             if !item.app_args.is_empty() {
                 header_lines.push(Line::from(vec![
-                    Span::raw("App Args: "),
+                    Span::raw("Sender Args: "),
                     Span::styled(
                         item.app_args.join(" "),
-                        Style::default().fg(config.color_member_normal), // Reusing member color for consistency
+                        Style::default().fg(config.color_member_normal),
+                    ),
+                ]));
+            }
+            if !item.receiver_app_path.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::raw("Receiver Path: "),
+                    Span::styled(
+                        item.receiver_app_path.clone(),
+                        Style::default().fg(config.color_path_normal),
+                    ),
+                ]));
+            }
+
+            if !item.receiver_app_args.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::raw("Receiver Args: "),
+                    Span::styled(
+                        item.receiver_app_args.join(" "),
+                        Style::default().fg(config.color_member_normal),
                     ),
                 ]));
             }
@@ -450,7 +469,7 @@ Error: {:#?}",
 
             // Prepend header to detail_text
             let mut header_text = Text::from(header_lines);
-            header_text.extend(detail_text); // Extend appends lines from one Text to another
+            header_text.extend(detail_text);
             app.detail_text = header_text;
 
             app.detail_scroll = 0;

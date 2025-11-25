@@ -1,10 +1,14 @@
-use anyhow::Result; // Added for error propagation
-use futures::StreamExt; // Required for stream.next().await
+use anyhow::Result;
+use futures::StreamExt;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
-use zbus::{fdo::DBusProxy, Connection, MessageStream};
 use tokio::fs::read;
+use tokio::sync::Mutex;
+use zbus::{fdo::DBusProxy, Connection, MessageStream};
+
+type ProcessInfo = (u32, String, String, Vec<String>);
 
 #[derive(Debug, Clone)]
 pub struct Item {
@@ -22,6 +26,10 @@ pub struct Item {
     pub app_name: String,
     pub app_path: String,
     pub app_args: Vec<String>,
+    pub receiver_pid: Option<u32>,
+    pub receiver_app_name: String,
+    pub receiver_app_path: String,
+    pub receiver_app_args: Vec<String>,
 }
 
 impl Default for Item {
@@ -36,16 +44,45 @@ impl Default for Item {
             serial: String::new(),
             reply_serial: String::new(),
             is_reply: false,
-            stream_type: BusType::Session, // Default value
+            stream_type: BusType::Session,
             pid: None,
             app_name: String::new(),
             app_path: String::new(),
             app_args: Vec::new(),
+            receiver_pid: None,
+            receiver_app_name: String::new(),
+            receiver_app_path: String::new(),
+            receiver_app_args: Vec::new(),
         }
     }
 }
 
-// what type of bus is this?
+impl Item {
+    pub fn sender_display(&self) -> String {
+        if self.app_name != "Unknown" && self.pid.is_some() {
+            format!("{}:{}", self.app_name, self.pid.unwrap_or(0))
+        } else {
+            self.sender.clone()
+        }
+    }
+
+    pub fn receiver_display(&self) -> String {
+        if !self.receiver.is_empty() {
+            if self.receiver_app_name != "Unknown" && self.receiver_pid.is_some() {
+                format!(
+                    "{}:{}",
+                    self.receiver_app_name,
+                    self.receiver_pid.unwrap_or(0)
+                )
+            } else {
+                self.receiver.clone()
+            }
+        } else {
+            String::new()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BusType {
     Session = 0,
@@ -97,15 +134,23 @@ impl std::str::FromStr for GroupingType {
 
 async fn get_process_info(
     conn: &zbus::Connection,
-    sender_name: &str,
-) -> Option<(u32, String, String, Vec<String>)> {
+    bus_name: &str,
+    cache: &Arc<Mutex<HashMap<String, ProcessInfo>>>,
+) -> Option<ProcessInfo> {
+    {
+        let cache_locked = cache.lock().await;
+        if let Some(info) = cache_locked.get(bus_name) {
+            return Some(info.clone());
+        }
+    }
+
     let pid: u32 = conn
         .call_method(
             Some("org.freedesktop.DBus"),
-            "/org/freedesktop/DBus",      // Object path
-            Some("org.freedesktop.DBus"), // Interface name
-            "GetConnectionUnixProcessID", // Member name
-            &(sender_name),               // Body: argument to the method
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "GetConnectionUnixProcessID",
+            &(bus_name),
         )
         .await
         .ok()?
@@ -116,7 +161,6 @@ async fn get_process_info(
     let cmdline_path = format!("/proc/{}/cmdline", pid);
     let cmdline_content = read(&cmdline_path).await.ok()?;
 
-    // cmdline is null-separated, typically the first entry is the executable path
     let args: Vec<String> = cmdline_content
         .split(|&b| b == 0)
         .filter_map(|s| {
@@ -138,26 +182,31 @@ async fn get_process_info(
         .to_string_lossy()
         .to_string();
 
-    Some((pid, app_name, app_path, args))
+    let info = (pid, app_name, app_path, args);
+
+    {
+        let mut cache_locked = cache.lock().await;
+        cache_locked.insert(bus_name.to_string(), info.clone());
+    }
+
+    Some(info)
 }
 
-// creates a new dbus listener for the given but type. returns a lis
-pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item>>>> {
-    let messages = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+pub async fn dbus_listener(t: BusType) -> Result<Arc<Mutex<Vec<Item>>>> {
+    let messages = Arc::new(Mutex::new(Vec::new()));
     let messages_clone = Arc::clone(&messages);
+    let cache = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
 
-    //unwrap because if connection fails, the program have no reason to exist..
     let conn: Connection = match t {
         BusType::Session => zbus::Connection::session().await?,
         BusType::System => zbus::Connection::system().await?,
-        BusType::Both => {
-            // This is a placeholder. "Both" would require merging two streams,
-            // which needs a more complex implementation.
-            // For now, we can default to session or return an error.
-            // Let's default to Session for now to avoid crashing.
-            zbus::Connection::session().await?
-        }
+        BusType::Both => zbus::Connection::session().await?,
     };
+
+    if let Some(our_name) = conn.unique_name() {
+        // Prime the cache with our own info
+        let _ = get_process_info(&conn, our_name.as_str(), &cache).await;
+    }
 
     let proxy = DBusProxy::new(&conn).await?;
     proxy
@@ -190,12 +239,19 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
         .await?;
 
     let stream = MessageStream::from(&conn);
+    let cache_clone = Arc::clone(&cache);
     tokio::spawn(async move {
         let mut stream = stream;
         while let Some(Ok(msg)) = stream.next().await {
             let header = msg.header();
+
             let sender_name = header
                 .sender()
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_default();
+
+            let receiver_name = header
+                .destination()
                 .map(|s| s.as_str().to_string())
                 .unwrap_or_default();
 
@@ -205,21 +261,36 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
             let mut app_args_val = Vec::new();
 
             if sender_name.starts_with(':') {
-                if let Some((p, an, ap, aa)) = get_process_info(&conn, &sender_name).await {
+                if let Some((p, an, ap, aa)) =
+                    get_process_info(&conn, &sender_name, &cache_clone).await
+                {
                     pid_val = Some(p);
                     app_name_val = an;
                     app_path_val = ap;
                     app_args_val = aa;
                 }
             }
-            //create item
+
+            let mut receiver_pid_val = None;
+            let mut receiver_app_name_val = "Unknown".to_string();
+            let mut receiver_app_path_val = String::new();
+            let mut receiver_app_args_val = Vec::new();
+
+            if receiver_name.starts_with(':') {
+                if let Some((p, an, ap, aa)) =
+                    get_process_info(&conn, &receiver_name, &cache_clone).await
+                {
+                    receiver_pid_val = Some(p);
+                    receiver_app_name_val = an;
+                    receiver_app_path_val = ap;
+                    receiver_app_args_val = aa;
+                }
+            }
+
             let item = Item {
                 timestamp: SystemTime::now(),
                 sender: sender_name.clone(),
-                receiver: header
-                    .destination()
-                    .map(|s| s.as_str().to_string())
-                    .unwrap_or_default(),
+                receiver: receiver_name.clone(),
                 member: header
                     .member()
                     .map(|s| s.as_str().to_string())
@@ -235,17 +306,20 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<tokio::sync::Mutex<Vec<Item
                     .unwrap_or_default(),
                 serial: header.primary().serial_num().to_string(),
                 message: Some(msg),
-                stream_type: t, // Set the stream_type here
+                stream_type: t,
                 pid: pid_val,
                 app_name: app_name_val,
                 app_path: app_path_val,
                 app_args: app_args_val,
+                receiver_pid: receiver_pid_val,
+                receiver_app_name: receiver_app_name_val,
+                receiver_app_path: receiver_app_path_val,
+                receiver_app_args: receiver_app_args_val,
             };
 
-            //push to messages_clone
             messages_clone.lock().await.push(item);
         }
     });
 
-    Ok(messages) // Wrapped messages in Ok()
+    Ok(messages)
 }
