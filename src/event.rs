@@ -57,6 +57,8 @@ pub async fn handle_event(
                         if app.grouping_selection_state.selected().is_none() {
                             app.grouping_selection_state.select(Some(0));
                         }
+                        // app.mode = Mode::GroupingSelection; // Enter grouping selection mode
+                        // app.grouping_selection_state.select(Some(0)); // Select first item by default
                     }
                     KeyCode::Char('f') => app.mode = Mode::Filtering,
                     KeyCode::Up => {
@@ -237,7 +239,7 @@ pub async fn handle_event(
                         };
                         app.grouping_selection_state.select(Some(i));
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Char(' ') => {
                         if let Some(selected_index) = app.grouping_selection_state.selected() {
                             let selected_grouping_type = all_grouping_options[selected_index];
 
@@ -286,8 +288,9 @@ pub async fn handle_event(
                                 app.grouping_keys.push(crate::bus::GroupingType::None);
                             }
                         }
+                        // app.mode = Mode::Normal;
                     }
-                    KeyCode::Esc => {
+                    KeyCode::Esc | KeyCode::Char('g') => {
                         app.mode = Mode::Normal;
                     }
                     _ => {} // Ignore other keys
@@ -321,13 +324,13 @@ pub async fn handle_event(
                                     app.filtered_and_sorted_items.get(selected_message_index)
                                 {
                                     let field_name = autofilter_options[selected_option_index];
-                                    let field_value = match field_name {
-                                        "sender" => item.sender.as_str(),
-                                        "member" => item.member.as_str(),
-                                        "path" => item.path.as_str(),
-                                        "serial" => item.serial.as_str(),
-                                        "reply_serial" => item.reply_serial.as_str(),
-                                        _ => "", // Should not happen
+                                    let field_value: String = match field_name {
+                                        "sender" => item.sender_display(),
+                                        "member" => item.member.clone(),
+                                        "path" => item.path.clone(),
+                                        "serial" => item.serial.clone(),
+                                        "reply_serial" => item.reply_serial.clone(),
+                                        _ => String::new(),
                                     };
                                     app.input =
                                         Input::from(format!("{}={}", field_name, field_value));

@@ -106,13 +106,13 @@ This plan outlines the next steps to integrate the new architecture and build ou
 ### Optionals
 - [x] Option to toggle relative times (e.g., “2s ago”) which can help see event bursts more clearly.
  - [x] Option to toggle relative times (e.g., “0s” -> “59s” -> “1m” -> “59m” -> “1h” ->...) which can help see event bursts more clearly.
-- [] Support hierarchical grouping (e.g., first by sender, then by member).
+- [x] Support hierarchical grouping (e.g., first by sender, then by member). -> managed by having more grouping enabled at one time. not hierarchical, but flat
 - [] Expand/collapse groups and show message counts to manage high-volume streams.
 - [] allow full-text search inside message arguments or property values.
   - [] Highlight matches in the message details view for easier spotting.
 - [] dump messages to a file + load messages from a file (just active.. if you have a filter, just dump the ones shown, or mabye have a selector at that point..)
 - [x] "lighting strike" ticker besides messages. goes from bright to dark depending on the time (60 sec)
-- [] look up the actual application path + pid sending the message. in detaisl we can show full path + any arguments if present, but in list view we only need to show "{appname} (pid)"
+- [x] look up the actual application path + pid sending the message. in detaisl we can show full path + any arguments if present, but in list view we only need to show "{appname} (pid)"
 - [x] revisit application setup, document in /docs about current setup and possible improvements (including new code files to be better organized or alterntiative architecture (keep it high level))
 
 
@@ -165,3 +165,29 @@ exmple: sticky between groups:
   [item without the group3 value shown]
 {not shown: more items in group 3}
 ```
+
+### Logging & Performance Analytics
+
+To diagnose and address performance slowdowns with large datasets, a comprehensive logging and analytics layer should be implemented.
+
+-   [x] **Introduce `tracing` framework**: Integrate the `tracing`, `tracing-subscriber`, and `tracing-appender` crates to provide asynchronous, non-blocking logging to a file.
+    -   Logs will be written to `d-buddy.log` in the current directory.
+    -   Logging can be enabled via a `--log` command-line flag.
+    -   Log level can be configured using the `RUST_LOG` environment variable (e.g., `RUST_LOG=d_buddy=debug`).
+
+-   [x] **Instrument Critical Code Paths**: Add `tracing` spans to measure the duration of key operations that are likely to be performance-sensitive.
+    -   **Main Event Loop**: Measure the time taken for each iteration of the main `run` loop in `src/main.rs` to identify overall performance bottlenecks.
+    -   **Message Processing**:
+        -   Time taken to filter the message list based on user criteria.
+        -   Time taken to sort the filtered messages.
+        -   Time taken to generate the `ListItem` widgets for rendering (the `flat_map` operation).
+    -   **UI Rendering**: Measure the duration of the `terminal.draw` call to isolate rendering-specific slowdowns.
+    -   **D-Bus Listener**: In `src/bus.rs`, log the time taken for each `get_process_info` call to identify any slow D-Bus interactions, especially on cache misses.
+
+-   **In-App Analytics View (Optional)**:
+    -   Add a new, optional pane to the TUI (toggled by a key, e.g., `d` for diagnostics) that displays real-time performance metrics.
+    -   Metrics to display could include:
+        -   Time of the last main loop iteration (in ms).
+        -   A moving average of the loop time.
+        -   The total number of messages currently held in memory.
+        -   The cache hit/miss ratio for process information lookups.

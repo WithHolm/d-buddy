@@ -147,13 +147,13 @@ pub fn ui<'a>(
         if let Some(selected_index) = app.list_state.selected() {
             if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
                 for &option in autofilter_options.iter() {
-                    let example_value = match option {
-                        "sender" => item.sender.as_str(),
-                        "member" => item.member.as_str(),
-                        "path" => item.path.as_str(),
-                        "serial" => item.serial.as_str(),
-                        "reply_serial" => item.reply_serial.as_str(),
-                        _ => "",
+                    let example_value: String = match option {
+                        "sender" => item.sender_display(),
+                        "member" => item.member.clone(),
+                        "path" => item.path.clone(),
+                        "serial" => item.serial.clone(),
+                        "reply_serial" => item.reply_serial.clone(),
+                        _ => String::new(),
                     };
                     list_items.push(ListItem::new(Line::from(vec![
                         Span::raw(format!("{}: ", option)),

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::read;
 use tokio::sync::Mutex;
+use tracing::instrument;
 use zbus::{fdo::DBusProxy, Connection, MessageStream};
 
 type ProcessInfo = (u32, String, String, Vec<String>);
@@ -132,6 +133,7 @@ impl std::str::FromStr for GroupingType {
     }
 }
 
+#[instrument(skip(conn, cache))]
 async fn get_process_info(
     conn: &zbus::Connection,
     bus_name: &str,
