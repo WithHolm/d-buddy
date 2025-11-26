@@ -73,17 +73,30 @@ pub fn ui(
     ]));
     title_spans.extend(app.cached_title_suffix.as_ref().unwrap().clone());
 
-    // Calculate the visible height of the list area
-    let list_area_height = main_chunks[0].height as usize;
-
-    // Adjust list state to keep selected item in view
-    let selected_index = app.list_state.selected().unwrap_or(0);
     let num_filtered_items = filtered_items.len();
+    // The list has a border which reduces the visible height by 2.
+    let list_area_height = main_chunks[0].height.saturating_sub(2) as usize;
 
     if num_filtered_items > 0 {
         // Adjust selected_index to ensure it's within bounds after filtering/sorting
+        let selected_index = app.list_state.selected().unwrap_or(0);
         if selected_index >= num_filtered_items {
             app.list_state.select(Some(num_filtered_items - 1));
+        }
+
+        // Manually adjust the offset to ensure the selected item is always in view.
+        // This is necessary because we read the offset *before* ratatui has a chance
+        // to render and update it based on the new selection.
+        if let Some(selected) = app.list_state.selected() {
+            let current_offset = app.list_state.offset();
+            if selected < current_offset {
+                // If selection is above the viewport, move viewport up to show it at the top.
+                *app.list_state.offset_mut() = selected;
+            } else if selected >= current_offset.saturating_add(list_area_height) {
+                // If selection is below the viewport, move viewport down to show it at the bottom.
+                *app.list_state.offset_mut() =
+                    selected.saturating_sub(list_area_height).saturating_add(1);
+            }
         }
     } else {
         app.list_state.select(None);

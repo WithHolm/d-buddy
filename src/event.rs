@@ -14,6 +14,7 @@ use zbus::zvariant::{Structure, Value};
 
 use tokio::time::sleep;
 
+//check for user input/key presses
 pub async fn handle_event(
     app: &mut App,
     config: &Config,

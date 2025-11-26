@@ -23,6 +23,7 @@ use std::{
     io::{self, stdout},
     time::Duration,
 };
+use tokio::time::Instant;
 
 use tracing::instrument;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
@@ -155,10 +156,12 @@ async fn run(
 
     let mut clipboard = Clipboard::new().unwrap();
 
-    let tick_rate = Duration::from_millis(30);
+    let tick_rate = Duration::from_millis(24);
+    let min_wait = Duration::from_millis(2);
 
     loop {
-        let _main_loop_span = tracing::info_span!("main_loop").entered();
+        let loop_timer = Instant::now();
+        let _main_loop_span = tracing::debug_span!("main_loop").entered();
         let session_count = if let Some(arc) = app.messages.get(&BusType::Session) {
             arc.lock().await.len()
         } else {
@@ -298,7 +301,7 @@ async fn run(
             }
         }
         {
-            let _draw_span = tracing::info_span!("drawing_ui").entered();
+            let _draw_span = tracing::debug_span!("drawing_ui").entered();
             terminal.draw(|f| {
                 let temp_filtered_items = std::mem::take(&mut app.filtered_and_sorted_items);
                 ui::ui(
@@ -313,9 +316,27 @@ async fn run(
                 app.filtered_and_sorted_items = temp_filtered_items;
             })?;
         }
-        let event_ready = tokio::time::timeout(tick_rate, event_stream.next()).await;
 
+        //check if any key is pressed
+        let event_ready;
+        {
+            let elapsed = loop_timer.elapsed();
+            // Calculate dynamic timeout with minimum wait
+            let timeout = if elapsed >= tick_rate {
+                // We are behind schedule, but still yield briefly
+                min_wait
+            } else {
+                // Normal case: leftover time + safety minimum
+                (tick_rate - elapsed).max(min_wait)
+            };
+
+            let _event_polling_span = tracing::debug_span!("waiting_for_user_keypress").entered();
+            event_ready = tokio::time::timeout(timeout, event_stream.next()).await;
+        }
+
+        // handle any keypress
         if let Ok(Some(Ok(event))) = event_ready {
+            let _event_handling_span = tracing::info_span!("handling_user_input").entered();
             if event::handle_event(app, config, event, &mut clipboard).await? {
                 break;
             }
