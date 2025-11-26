@@ -2,6 +2,7 @@ use ratatui::prelude::*;
 
 // color config
 pub struct Config {
+    pub enable_debug_ui: bool,
     pub color_dict: Color,
     pub color_struct: Color,
     pub color_default_stripe: Color,
@@ -30,6 +31,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            enable_debug_ui: false,
             color_dict: Color::Rgb(20, 20, 40),   // Dark Blue
             color_struct: Color::Rgb(40, 20, 40), // Dark Magenta
             color_default_stripe: Color::DarkGray,

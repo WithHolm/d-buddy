@@ -38,6 +38,9 @@ struct Args {
     /// Enable logging to d-buddy.log
     #[arg(long)]
     log: bool,
+    /// Enable debug UI elements
+    #[arg(long)]
+    debug_ui: bool,
 }
 
 // Main asynchronous entry point of the application
@@ -72,7 +75,8 @@ async fn main() -> Result<()> {
         None
     };
 
-    let config = Config::default();
+    let mut config = Config::default();
+    config.enable_debug_ui = args.debug_ui;
 
     let mut app = App::default();
     app.initialize_static_ui_elements(&config);
@@ -160,6 +164,7 @@ async fn run(
     let min_wait = Duration::from_millis(2);
 
     loop {
+        tracing::debug!("Start of loop: selected = {:?}", app.list_state.selected());
         let loop_timer = Instant::now();
         let _main_loop_span = tracing::debug_span!("main_loop").entered();
         let session_count = if let Some(arc) = app.messages.get(&BusType::Session) {

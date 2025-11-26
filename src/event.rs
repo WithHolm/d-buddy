@@ -77,11 +77,24 @@ pub async fn handle_event(
                     }
                     KeyCode::Down => {
                         if !app.filtered_and_sorted_items.is_empty() {
-                            let i = match app.list_state.selected() {
-                                Some(i) => (i + 1).min(app.filtered_and_sorted_items.len() - 1),
+                            let current_selected_before = app.list_state.selected();
+                            tracing::debug!(
+                                "Down: current_selected_before = {:?}",
+                                current_selected_before
+                            );
+
+                            let i = match current_selected_before {
+                                Some(val) => (val + 1).min(app.filtered_and_sorted_items.len() - 1),
                                 None => 0,
                             };
+                            tracing::debug!("Down: calculated_i = {}", i);
+
                             app.list_state.select(Some(i));
+                            tracing::debug!(
+                                "Down: current_selected_after_select = {:?}",
+                                app.list_state.selected()
+                            );
+
                             if app.show_details {
                                 update_detail_text(app, config);
                             }

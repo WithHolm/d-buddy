@@ -21,6 +21,7 @@ The application has been recently refactored to support multiple D-Bus streams (
 * dont run cargo clippy 
 * always run cargo check and cargo fmt after code changes
 * all tasks are made like : "- {checkbox} [task description}". any indentation under is subtasks for the main task.
+
 ---
 
 ## Roadmap

@@ -18,6 +18,7 @@ pub fn ui(
     both_count: usize,
     filtered_items: &[crate::bus::Item],
 ) {
+    //if console is too small
     if frame.area().width < app.min_width || frame.area().height < app.min_height {
         let _span = tracing::info_span!("render_console_too_small_message").entered();
         let paragraph = Paragraph::new(
@@ -71,6 +72,50 @@ pub fn ui(
         Span::raw("|"),
         Span::styled(format!("Both({})", both_count), both_style),
     ]));
+
+    // Add filter status if active
+    let general_filter = app.input.value();
+    let mut filter_parts = Vec::new();
+    if !general_filter.is_empty() {
+        filter_parts.push(format!("text: \"{}\"", general_filter));
+    }
+    for (k, v) in &app.filter_criteria {
+        filter_parts.push(format!("{}={}", k, v));
+    }
+
+    if !filter_parts.is_empty() {
+        let filter_line = Line::from(vec![
+            Span::raw(" | "),
+            Span::styled(
+                format!("FILTER: {}", filter_parts.join(" ")),
+                Style::default().fg(config.color_status_message).bold(),
+            ),
+        ]);
+        title_spans.extend(filter_line);
+    }
+
+    // Add debug item count
+    if config.enable_debug_ui {
+        let selected = app
+            .list_state
+            .selected()
+            .map_or("None".to_string(), |s| s.to_string());
+        let offset = app.list_state.offset();
+        let debug_line = Line::from(vec![
+            Span::raw(" | "),
+            Span::styled(
+                format!(
+                    "Items: {} | Selected: {} | Offset: {}",
+                    filtered_items.len(),
+                    selected,
+                    offset
+                ),
+                Style::default().fg(Color::Red),
+            ),
+        ]);
+        title_spans.extend(debug_line);
+    }
+
     title_spans.extend(app.cached_title_suffix.as_ref().unwrap().clone());
 
     let num_filtered_items = filtered_items.len();
@@ -94,8 +139,7 @@ pub fn ui(
                 *app.list_state.offset_mut() = selected;
             } else if selected >= current_offset.saturating_add(list_area_height) {
                 // If selection is below the viewport, move viewport down to show it at the bottom.
-                *app.list_state.offset_mut() =
-                    selected.saturating_sub(list_area_height).saturating_add(1);
+                *app.list_state.offset_mut() = selected - list_area_height + 1;
             }
         }
     } else {
@@ -113,7 +157,9 @@ pub fn ui(
 
         filtered_items[offset..end_offset]
             .iter()
-            .flat_map(|item| {
+            .enumerate()
+            .flat_map(|(index, item)| {
+                let absolute_index = offset + index;
                 let mut items_to_render = Vec::new();
                 let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
                 let mut is_grouped = false;
@@ -192,7 +238,13 @@ pub fn ui(
                 let sender_info = item.sender_display();
                 let receiver_info = item.receiver_display();
 
-                let mut spans = Vec::with_capacity(15); // Pre-allocate
+                let mut spans = Vec::with_capacity(16); // Pre-allocate, increased capacity
+                if config.enable_debug_ui {
+                    spans.push(Span::styled(
+                        format!("[{}] ", absolute_index),
+                        Style::default().fg(Color::Red),
+                    ));
+                }
                 spans.push(Span::raw(indent));
                 spans.push(ticker_span);
                 spans.push(Span::raw(" ["));
