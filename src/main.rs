@@ -290,8 +290,6 @@ async fn run(
                 });
             }
 
-
-
             // BUGFIX: Ensure an item is selected by default if the list is not empty
 
             if app.list_state.selected().is_none() && !app.filtered_and_sorted_items.is_empty() {

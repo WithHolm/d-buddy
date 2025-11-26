@@ -33,7 +33,7 @@ pub async fn handle_event(
                             return Ok(true);
                         }
                         app.show_details = false;
-                    },
+                    }
                     KeyCode::Tab => {
                         app.stream = match app.stream {
                             BusType::Session => BusType::System,
@@ -41,10 +41,10 @@ pub async fn handle_event(
                             BusType::Both => BusType::Session,
                         };
                         app.list_state.select(None); // Reset selection
-                    },
+                    }
                     KeyCode::Char('t') => {
                         app.use_relative_time = !app.use_relative_time;
-                    },
+                    }
                     KeyCode::Char('x') => {
                         if let Some(selected) = app.list_state.selected() {
                             if let Some(item) = app.filtered_and_sorted_items.get(selected) {
@@ -52,16 +52,16 @@ pub async fn handle_event(
                                 app.mode = Mode::ThreadView;
                             }
                         }
-                    },
+                    }
                     KeyCode::Char('g') => {
                         app.mode = Mode::GroupingSelection;
                         if app.grouping_selection_state.selected().is_none() {
                             app.grouping_selection_state.select(Some(0));
                         }
-                    },
+                    }
                     KeyCode::Char('f') => {
                         app.mode = Mode::Filtering;
-                    },
+                    }
                     KeyCode::Up => {
                         if !app.filtered_and_sorted_items.is_empty() {
                             let i = match app.list_state.selected() {
@@ -73,7 +73,7 @@ pub async fn handle_event(
                                 update_detail_text(app, config);
                             }
                         }
-                    },
+                    }
                     KeyCode::Down => {
                         if !app.filtered_and_sorted_items.is_empty() {
                             let i = match app.list_state.selected() {
@@ -85,7 +85,7 @@ pub async fn handle_event(
                                 update_detail_text(app, config);
                             }
                         }
-                    },
+                    }
                     KeyCode::Char('s') | KeyCode::Char(' ') => {
                         if app.show_details {
                             app.show_details = false;
@@ -93,12 +93,12 @@ pub async fn handle_event(
                             update_detail_text(app, config);
                             app.show_details = true;
                         }
-                    },
+                    }
                     KeyCode::Esc => {
                         if app.show_details {
                             app.show_details = false;
                         }
-                    },
+                    }
                     KeyCode::Char('r') => {
                         if let Some(selected) = app.list_state.selected() {
                             if let Some(item) = app.filtered_and_sorted_items.get(selected) {
@@ -123,7 +123,7 @@ pub async fn handle_event(
                                 }
                             }
                         }
-                    },
+                    }
                     KeyCode::Char('c') => {
                         if app.show_details {
                             let text_to_copy_text = app.detail_text.clone();
@@ -144,27 +144,27 @@ pub async fn handle_event(
                             app.status_message =
                                 format!("{} | {}", file_write_status, clipboard_status);
                         }
-                    },
+                    }
                     KeyCode::Char('j') => {
                         if app.show_details {
                             app.detail_scroll_request = Some(1);
                         }
-                    },
+                    }
                     KeyCode::Char('k') => {
                         if app.show_details {
                             app.detail_scroll_request = Some(-1);
                         }
-                    },
+                    }
                     KeyCode::PageDown => {
                         if app.show_details {
                             app.detail_scroll_request = Some(10);
                         }
-                    },
+                    }
                     KeyCode::PageUp => {
                         if app.show_details {
                             app.detail_scroll_request = Some(-10);
                         }
-                    },
+                    }
                     _ => {} // Ignore other keys
                 }
             }
@@ -349,13 +349,17 @@ pub async fn handle_event(
                 }
             }
             Mode::ThreadView => {
-                match key.code {
-                    KeyCode::Esc => {
-                        app.thread_serial = None;
-                        app.mode = Mode::Normal;
-                    }
-                    _ => {} // Ignore other keys for now
+                if key.code == KeyCode::Esc {
+                    app.thread_serial = None;
+                    app.mode = Mode::Normal;
                 }
+                // match key.code {
+                //     KeyCode::Esc => {
+                //         app.thread_serial = None;
+                //         app.mode = Mode::Normal;
+                //     }
+                //     _ => {} // Ignore other keys for now
+                // }
             }
         }
     }

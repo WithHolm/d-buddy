@@ -1,9 +1,9 @@
 use crate::bus::{BusType, GroupingType, Item};
 use ratatui::{
+    prelude::Color,
+    style::{Modifier, Style, Stylize},
     text::{Line, Text},
     widgets::ListState,
-    style::{Modifier, Style, Stylize},
-    prelude::Color,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,6 +51,10 @@ pub struct App {
     pub cached_thread_view_key_hints: Option<Line<'static>>,
     pub cached_grouping_selection_key_hints: Option<Line<'static>>,
     pub cached_console_too_small_message: Option<Line<'static>>,
+
+    // Cached title elements
+    pub cached_title_prefix: Option<Line<'static>>,
+    pub cached_title_suffix: Option<Line<'static>>,
 }
 
 // Default implementation for the App struct
@@ -86,6 +90,8 @@ impl Default for App {
             cached_thread_view_key_hints: None,
             cached_grouping_selection_key_hints: None,
             cached_console_too_small_message: None,
+            cached_title_prefix: None,
+            cached_title_suffix: None,
         }
     }
 }
@@ -93,7 +99,9 @@ impl Default for App {
 impl App {
     pub fn initialize_static_ui_elements(&mut self, config: &crate::config::Config) {
         // "Console too small" message
-        self.cached_console_too_small_message = Some(Line::from("Console is too small to display the application (q to quit)"));
+        self.cached_console_too_small_message = Some(Line::from(
+            "Console is too small to display the application (q to quit)",
+        ));
 
         // Filtering key hints
         self.cached_filtering_key_hints = Some(Line::from(vec![
@@ -178,5 +186,9 @@ impl App {
             "↓".bold().fg(config.color_keybind_key),
             ": navigate".into(),
         ]));
+
+        // Title elements
+        self.cached_title_prefix = Some(Line::from("D-Bus Signals ["));
+        self.cached_title_suffix = Some(Line::from("]"));
     }
 }

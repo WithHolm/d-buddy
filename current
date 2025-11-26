@@ -3,5 +3,10 @@
 - [completed] Investigate `get_process_info` call patterns: Determine how frequently get_process_info is invoked within a single main_loop iteration. Even if individual calls are fast (microseconds), frequent calls could lead to significant cumulative overhead.
 - [completed] Run the application with logging enabled to generate new logs with granular tracing.
 - [completed] Analyze the new log file to identify bottlenecks within the `main_loop`.
-- [in_progress] Implement lazy rendering for `ListItem`s: Only generate and render visible items within the scroll viewport.
-- [pending] Measure the performance improvement after implementing lazy rendering.
+- [completed] Implement lazy rendering for `ListItem`s: Only generate and render visible items within the scroll viewport.
+- [completed] Measure the performance improvement after implementing lazy rendering.
+- [completed] Optimize `drawing_ui` function in `src/ui.rs`
+  - [completed] Change `filtered_items` parameter to a slice (`&[Item]`) to avoid cloning in `main.rs`.
+  - [completed] Cache static Line and Paragraph widgets to reduce repetitive work.
+  - [completed] Add more granular tracing spans to pinpoint exact `render_widget` bottlenecks.
+  - [completed] Optimize `render_main_message_list` performance.

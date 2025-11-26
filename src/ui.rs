@@ -20,9 +20,15 @@ pub fn ui(
     filtered_items: &[crate::bus::Item],
 ) {
     if frame.area().width < app.min_width || frame.area().height < app.min_height {
-        let paragraph = Paragraph::new(app.cached_console_too_small_message.as_ref().unwrap().clone())
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
+        let _span = tracing::info_span!("render_console_too_small_message").entered();
+        let paragraph = Paragraph::new(
+            app.cached_console_too_small_message
+                .as_ref()
+                .unwrap()
+                .clone(),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
         let area = centered_rect(60, 20, frame.area());
         frame.render_widget(Clear, area);
         frame.render_widget(paragraph, area);
@@ -58,17 +64,15 @@ pub fn ui(
         ),
     };
 
-    let title_spans = Line::from(vec![
-        Span::raw("D-Bus Signals ["),
+    let mut title_spans = app.cached_title_prefix.as_ref().unwrap().clone();
+    title_spans.extend(Line::from(vec![
         Span::styled(format!("Session({})", session_count), session_style),
         Span::raw("|"),
         Span::styled(format!("System({})", system_count), system_style),
         Span::raw("|"),
         Span::styled(format!("Both({})", both_count), both_style),
-        Span::raw("]"),
-    ]);
-
-
+    ]));
+    title_spans.extend(app.cached_title_suffix.as_ref().unwrap().clone());
 
     // Calculate the visible height of the list area
     let list_area_height = main_chunks[0].height as usize;
@@ -90,11 +94,10 @@ pub fn ui(
     let end_offset = (offset + list_area_height).min(num_filtered_items);
 
     let visible_items: Vec<ListItem> = if num_filtered_items > 0 {
-        let _list_item_generation_span =
-            tracing::info_span!("list_item_generation").entered();
+        let _list_item_generation_span = tracing::info_span!("list_item_generation").entered();
         // This is the core of lazy rendering: only process visible items
         let now = chrono::Local::now(); // Get current time once per loop iteration for ticker
-        let mut last_group_keys_composite: Option<String> = None;
+        let mut last_group_key_vec: Option<Vec<Cow<'_, str>>> = None;
 
         filtered_items[offset..end_offset]
             .iter()
@@ -102,7 +105,6 @@ pub fn ui(
                 let mut items_to_render = Vec::new();
                 let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
                 let mut is_grouped = false;
-
 
                 for key in &app.grouping_keys {
                     if key == &crate::bus::GroupingType::None {
@@ -118,17 +120,22 @@ pub fn ui(
                     };
                     current_group_keys_vec.push(group_component);
                 }
-                let current_group_keys_composite = current_group_keys_vec.join("::");
+                if is_grouped {
+                    let group_changed = if let Some(last_vec) = last_group_key_vec.as_ref() {
+                        last_vec != &current_group_keys_vec
+                    } else {
+                        true
+                    };
 
-                if is_grouped
-                    && last_group_keys_composite.as_ref() != Some(&current_group_keys_composite)
-                {
-                    let header_spans = vec![Span::styled(
-                        current_group_keys_composite.clone(),
-                        Style::default().fg(config.color_grouping_header).bold(),
-                    )];
-                    items_to_render.push(ListItem::new(Line::from(header_spans)));
-                    last_group_keys_composite = Some(current_group_keys_composite);
+                    if group_changed {
+                        let current_group_keys_composite = current_group_keys_vec.join("::");
+                        let header_spans = vec![Span::styled(
+                            current_group_keys_composite,
+                            Style::default().fg(config.color_grouping_header).bold(),
+                        )];
+                        items_to_render.push(ListItem::new(Line::from(header_spans)));
+                        last_group_key_vec = Some(current_group_keys_vec.clone());
+                    }
                 }
 
                 let indent = if is_grouped { "  " } else { "" };
@@ -257,10 +264,14 @@ pub fn ui(
         }); // Symbol to indicate selected item
 
     // Render the message list widget
-    frame.render_stateful_widget(list, main_chunks[0], &mut app.list_state);
+    {
+        let _span = tracing::info_span!("render_main_message_list").entered();
+        frame.render_stateful_widget(list, main_chunks[0], &mut app.list_state);
+    }
 
     // Render Filtering popup as an overlay if in Mode::Filtering
     if let Mode::Filtering = app.mode {
+        let _span = tracing::info_span!("render_filtering_popup").entered();
         let percent_x = 80;
         let r = frame.area();
 
@@ -307,6 +318,7 @@ pub fn ui(
 
     // Render AutoFilterSelection popup as an overlay if in Mode::AutoFilterSelection
     if let Mode::AutoFilterSelection = app.mode {
+        let _span = tracing::info_span!("render_autofilter_selection_popup").entered();
         let area = centered_rect(60, 30, frame.area());
         let block = Block::default()
             .title("Select AutoFilter Field")
@@ -358,6 +370,7 @@ pub fn ui(
 
     // If show_details is true, render the message details popup
     if app.show_details {
+        let _span = tracing::info_span!("render_details_view_popup").entered();
         let area = centered_rect(80, 80, frame.area());
         let popup_inner_height = area.height.saturating_sub(2);
 
@@ -408,7 +421,10 @@ pub fn ui(
             let help_text = if !app.status_message.is_empty() {
                 Line::from(app.status_message.as_str().fg(config.color_status_message))
             } else if app.show_details {
-                app.cached_normal_details_key_hints.as_ref().unwrap().clone()
+                app.cached_normal_details_key_hints
+                    .as_ref()
+                    .unwrap()
+                    .clone()
             } else {
                 app.cached_normal_key_hints.as_ref().unwrap().clone()
             };
@@ -417,7 +433,12 @@ pub fn ui(
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::AutoFilterSelection => {
-            let help_paragraph = Paragraph::new(app.cached_autofilter_selection_key_hints.as_ref().unwrap().clone())
+            let help_paragraph = Paragraph::new(
+                app.cached_autofilter_selection_key_hints
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
             .block(Block::default().borders(Borders::ALL).title("Autofilter"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
@@ -437,6 +458,7 @@ pub fn ui(
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
+            let _span = tracing::info_span!("render_grouping_selection_popup").entered();
             let all_grouping_options = [
                 crate::bus::GroupingType::Sender,
                 crate::bus::GroupingType::Member,
@@ -524,16 +546,21 @@ pub fn ui(
     // Render the appropriate keybinds/status in the bottom chunk based on the current mode
     match app.mode {
         Mode::Filtering => {
+            let _span = tracing::info_span!("render_bottom_keybinds_filtering").entered();
             let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
             let help_paragraph = Paragraph::new(key_hints)
                 .block(Block::default().borders(Borders::ALL).title("Keys"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::Normal => {
+            let _span = tracing::info_span!("render_bottom_keybinds_normal").entered();
             let help_text = if !app.status_message.is_empty() {
                 Line::from(app.status_message.as_str().fg(config.color_status_message))
             } else if app.show_details {
-                app.cached_normal_details_key_hints.as_ref().unwrap().clone()
+                app.cached_normal_details_key_hints
+                    .as_ref()
+                    .unwrap()
+                    .clone()
             } else {
                 app.cached_normal_key_hints.as_ref().unwrap().clone()
             };
@@ -542,11 +569,19 @@ pub fn ui(
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::AutoFilterSelection => {
-            let help_paragraph = Paragraph::new(app.cached_autofilter_selection_key_hints.as_ref().unwrap().clone())
+            let _span =
+                tracing::info_span!("render_bottom_keybinds_autofilter_selection").entered();
+            let help_paragraph = Paragraph::new(
+                app.cached_autofilter_selection_key_hints
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
             .block(Block::default().borders(Borders::ALL).title("Autofilter"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::ThreadView => {
+            let _span = tracing::info_span!("render_bottom_keybinds_thread_view").entered();
             let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
             let mut thread_view_line = Line::from(vec![
                 Span::raw("Thread View (Serial: "),
@@ -562,8 +597,14 @@ pub fn ui(
             frame.render_widget(help_paragraph, chunks[1]);
         }
         Mode::GroupingSelection => {
-            let help_paragraph = Paragraph::new(app.cached_grouping_selection_key_hints.as_ref().unwrap().clone())
-                .block(Block::default().borders(Borders::ALL).title("Grouping"));
+            let _span = tracing::info_span!("render_bottom_keybinds_grouping_selection").entered();
+            let help_paragraph = Paragraph::new(
+                app.cached_grouping_selection_key_hints
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
+            .block(Block::default().borders(Borders::ALL).title("Grouping"));
             frame.render_widget(help_paragraph, chunks[1]);
         }
     }
