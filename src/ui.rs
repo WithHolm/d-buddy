@@ -119,83 +119,65 @@ pub fn ui(
     title_spans.extend(app.cached_title_suffix.as_ref().unwrap().clone());
 
     let num_filtered_items = filtered_items.len();
-    // The list has a border which reduces the visible height by 2.
-    let list_area_height = main_chunks[0].height.saturating_sub(2) as usize;
-
     if num_filtered_items > 0 {
-        // Adjust selected_index to ensure it's within bounds after filtering/sorting
-        let selected_index = app.list_state.selected().unwrap_or(0);
-        if selected_index >= num_filtered_items {
+        if app.list_state.selected().unwrap_or(0) >= num_filtered_items {
             app.list_state.select(Some(num_filtered_items - 1));
-        }
-
-        // Manually adjust the offset to ensure the selected item is always in view.
-        // This is necessary because we read the offset *before* ratatui has a chance
-        // to render and update it based on the new selection.
-        if let Some(selected) = app.list_state.selected() {
-            let current_offset = app.list_state.offset();
-            if selected < current_offset {
-                // If selection is above the viewport, move viewport up to show it at the top.
-                *app.list_state.offset_mut() = selected;
-            } else if selected >= current_offset.saturating_add(list_area_height) {
-                // If selection is below the viewport, move viewport down to show it at the bottom.
-                *app.list_state.offset_mut() = selected - list_area_height + 1;
-            }
         }
     } else {
         app.list_state.select(None);
     }
 
-    let offset = app.list_state.offset();
-    let end_offset = (offset + list_area_height).min(num_filtered_items);
-
-    let visible_items: Vec<ListItem> = if num_filtered_items > 0 {
+    let mut visible_items: Vec<ListItem> = Vec::with_capacity(num_filtered_items);
+    if num_filtered_items > 0 {
         let _list_item_generation_span = tracing::info_span!("list_item_generation").entered();
-        // This is the core of lazy rendering: only process visible items
-        let now = chrono::Local::now(); // Get current time once per loop iteration for ticker
+        let now = chrono::Local::now();
+
+        let list_area_height = main_chunks[0].height.saturating_sub(2) as usize;
+        let offset = app.list_state.offset();
+        let overscan = 2;
+        let render_start = offset.saturating_sub(overscan);
+        let render_end = offset
+            .saturating_add(list_area_height)
+            .saturating_add(overscan);
+
         let mut last_group_key_vec: Option<Vec<Cow<'_, str>>> = None;
 
-        filtered_items[offset..end_offset]
-            .iter()
-            .enumerate()
-            .flat_map(|(index, item)| {
-                let absolute_index = offset + index;
-                let mut items_to_render = Vec::new();
-                let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
-                let mut is_grouped = false;
-
-                for key in &app.grouping_keys {
-                    if key == &crate::bus::GroupingType::None {
-                        continue;
-                    }
-                    is_grouped = true;
-                    let group_component: Cow<'_, str> = match key {
-                        crate::bus::GroupingType::Sender => item.app_name.as_str().into(),
-                        crate::bus::GroupingType::Member => item.member.as_str().into(),
-                        crate::bus::GroupingType::Path => item.path.as_str().into(),
-                        crate::bus::GroupingType::Serial => item.serial.as_str().into(),
-                        crate::bus::GroupingType::None => unreachable!(),
-                    };
-                    current_group_keys_vec.push(group_component);
+        for (item_index, item) in filtered_items.iter().enumerate() {
+            let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
+            let mut is_grouped = false;
+            for key in &app.grouping_keys {
+                if key == &crate::bus::GroupingType::None {
+                    continue;
                 }
-                if is_grouped {
-                    let group_changed = if let Some(last_vec) = last_group_key_vec.as_ref() {
-                        last_vec != &current_group_keys_vec
-                    } else {
-                        true
-                    };
+                is_grouped = true;
+                let group_component: Cow<'_, str> = match key {
+                    crate::bus::GroupingType::Sender => item.app_name.as_str().into(),
+                    crate::bus::GroupingType::Member => item.member.as_str().into(),
+                    crate::bus::GroupingType::Path => item.path.as_str().into(),
+                    crate::bus::GroupingType::Serial => item.serial.as_str().into(),
+                    crate::bus::GroupingType::None => unreachable!(),
+                };
+                current_group_keys_vec.push(group_component);
+            }
 
-                    if group_changed {
+            if is_grouped {
+                let group_changed = last_group_key_vec.as_ref() != Some(&current_group_keys_vec);
+                if group_changed {
+                    if visible_items.len() >= render_start && visible_items.len() < render_end {
                         let current_group_keys_composite = current_group_keys_vec.join("::");
                         let header_spans = vec![Span::styled(
                             current_group_keys_composite,
                             Style::default().fg(config.color_grouping_header).bold(),
                         )];
-                        items_to_render.push(ListItem::new(Line::from(header_spans)));
-                        last_group_key_vec = Some(current_group_keys_vec.clone());
+                        visible_items.push(ListItem::new(Line::from(header_spans)));
+                    } else {
+                        visible_items.push(ListItem::new(""));
                     }
+                    last_group_key_vec = Some(current_group_keys_vec);
                 }
+            }
 
+            if visible_items.len() >= render_start && visible_items.len() < render_end {
                 let indent = if is_grouped { "  " } else { "" };
                 let dt: chrono::DateTime<chrono::Local> = item.timestamp.into();
                 let timestamp = if app.use_relative_time {
@@ -220,13 +202,8 @@ pub fn ui(
                 };
 
                 let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
-                let total_fade_seconds = 60;
-                let ticker_color = if elapsed_seconds < total_fade_seconds {
-                    super::get_fading_color(
-                        config.color_ticker,
-                        elapsed_seconds,
-                        total_fade_seconds,
-                    )
+                let ticker_color = if elapsed_seconds < 60 {
+                    super::get_fading_color(config.color_ticker, elapsed_seconds, 60)
                 } else {
                     Color::DarkGray
                 };
@@ -237,11 +214,11 @@ pub fn ui(
 
                 let sender_info = item.sender_display();
                 let receiver_info = item.receiver_display();
+                let mut spans = Vec::with_capacity(16);
 
-                let mut spans = Vec::with_capacity(16); // Pre-allocate, increased capacity
                 if config.enable_debug_ui {
                     spans.push(Span::styled(
-                        format!("[{}] ", absolute_index),
+                        format!("[{}] ", item_index),
                         Style::default().fg(Color::Red),
                     ));
                 }
@@ -258,13 +235,11 @@ pub fn ui(
                 ));
                 spans.push(Span::raw("]"));
                 spans.push(Span::raw(" "));
-
-                if item.is_reply {
-                    spans.push(Span::raw(" ↩ "));
+                spans.push(if item.is_reply {
+                    Span::raw(" ↩ ")
                 } else {
-                    spans.push(Span::raw("   "));
-                }
-
+                    Span::raw("   ")
+                });
                 spans.push(Span::styled(
                     sender_info.into_owned(),
                     if app.show_details {
@@ -273,7 +248,6 @@ pub fn ui(
                         Style::default().fg(config.color_sender_normal)
                     },
                 ));
-
                 if !receiver_info.is_empty() {
                     spans.push(Span::raw(" -> "));
                     spans.push(Span::styled(
@@ -285,8 +259,7 @@ pub fn ui(
                         },
                     ));
                 }
-
-                spans.push(Span::raw(" ")); // Space before member
+                spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     item.member.as_str(),
                     if app.show_details {
@@ -305,13 +278,11 @@ pub fn ui(
                     },
                 ));
 
-                items_to_render.push(ListItem::new(Line::from(spans)));
-
-                items_to_render
-            })
-            .collect()
-    } else {
-        Vec::new()
+                visible_items.push(ListItem::new(Line::from(spans)));
+            } else {
+                visible_items.push(ListItem::new(""));
+            }
+        }
     };
 
     // Create the List widget for displaying D-Bus messages
@@ -396,6 +367,7 @@ pub fn ui(
         let mut list_items: Vec<ListItem> = Vec::new();
 
         if let Some(selected_index) = app.list_state.selected() {
+            tracing::debug!("AutoFilterSelection: selected_index = {:?}, filtered_and_sorted_items.len() = {}", selected_index, app.filtered_and_sorted_items.len());
             if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
                 for &option in autofilter_options.iter() {
                     let example_value: std::borrow::Cow<'_, str> = match option {

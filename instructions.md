@@ -6,10 +6,11 @@ A TUI for browsing D-Bus message streams using Rust, `ratatui`, and `zbus`.
 
 The application has been recently refactored to support multiple D-Bus streams (Session and System) concurrently.
 
-- **`main.rs`**: Contains the main application struct (`App`), state management, the primary event loop, and all UI rendering logic.
+- **`main.rs`**: Contains the main application struct (`App`), core state management, and the primary event loop. It orchestrates message processing, filtering, sorting, and delegates UI rendering to `src/ui.rs`.
 - **`bus.rs`**: Defines the data handling for D-Bus connections.
   - It introduces a clean `Item` struct that provides a structured representation of a message, including metadata like sender, destination, and reply info.
   - It provides an async `dbus_listener` function that connects to a specified bus (Session or System), spawns a background task to listen for signals, and populates a shared vector of `Item`s.
+- **`ui.rs`**: Contains all UI-related functions and logic. It is responsible for rendering the application's interface, including the main message list, popups, and detail views. It now employs a canonical lazy-loading strategy for the message list, generating placeholders for off-screen items to ensure smooth scrolling and stable state management.
 - **Data Model**: The central `App` struct now holds a `HashMap` where keys are the `BusType` (Session/System) and values are `Arc<tokio::sync::Mutex<Vec<bus::Item>>>`. This allows each bus listener to independently and safely update its own list of messages.
 
 ## AI
@@ -20,7 +21,7 @@ The application has been recently refactored to support multiple D-Bus streams (
 * NEVER RUN ANY GIT COMMANDS. dont commit any changes
 * dont run cargo clippy 
 * always run cargo check and cargo fmt after code changes
-* all tasks are made like : "- {checkbox} [task description}". any indentation under is subtasks for the main task.
+* all tasks are made like : "- {checkbox} [task description]". any indentation under is subtasks for the main task.
 
 ---
 
@@ -205,6 +206,3 @@ To diagnose and address performance slowdowns with large datasets, a comprehensi
         -   [x] Consider pre-allocating `Vec<Span>` with an estimated capacity before pushing multiple spans to reduce reallocations.
         -   [x] Implement conditional `Span` creation: avoid creating `Span`s for empty or non-visible elements.
     -   **(Advanced) Lazy Rendering**: Investigate rendering only the visible `ListItem`s within the scroll viewport rather than all filtered and sorted items, especially when dealing with extremely large message sets.
--   [x] Add more granular tracing to `run:main_loop`: The most critical next step is to identify what part of the run:main_loop is consuming the majority of the unaccounted ~240-250ms. This will involve adding additional tracing::info_span! macros to other significant code blocks within src/main.rs's main loop.
--   [x] Implement identified optimizations for `rendering_list`: Proceed with the optimizations already suggested in instructions.md, specifically focusing on Cow<'_, str> for string handling and pre-allocating Vec<Span> for ratatui Text Construction.
--   [x] Investigate `get_process_info` call patterns: Determine how frequently get_process_info is invoked within a single main_loop iteration. Even if individual calls are fast (microseconds), frequent calls could lead to significant cumulative overhead.
