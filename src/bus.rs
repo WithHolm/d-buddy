@@ -93,7 +93,9 @@ pub enum BusType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum GroupingType {
+    #[default]
     Sender,
     Member,
     Path,
@@ -101,11 +103,6 @@ pub enum GroupingType {
     None,
 }
 
-impl Default for GroupingType {
-    fn default() -> Self {
-        GroupingType::Sender
-    }
-}
 
 impl std::fmt::Display for GroupingType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

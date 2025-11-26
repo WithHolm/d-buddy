@@ -1,7 +1,6 @@
-use crate::bus::{BusType, GroupingType, Item};
+use crate::bus::{BusType, Item};
 use ratatui::{
-    prelude::Color,
-    style::{Modifier, Style, Stylize},
+    style::Stylize,
     text::{Line, Text},
     widgets::ListState,
 };

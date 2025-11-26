@@ -1,4 +1,4 @@
-use crate::bus::{BusType, GroupingType, Item};
+use crate::bus::BusType;
 use crate::config::Config;
 use crate::state::{App, Mode};
 use anyhow::Result;

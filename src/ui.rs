@@ -1,5 +1,4 @@
 use super::{App, Config, Mode};
-use crate::bus;
 use ratatui::{
     prelude::*,
     text::{Line, Text},
@@ -651,7 +650,7 @@ pub fn format_value(value: &Value, config: &Config) -> Text<'static> {
         }
 
         let mut lines = Vec::new();
-        let base_style = if parent_alternating_index % 2 == 0 {
+        let base_style = if parent_alternating_index.is_multiple_of(2) {
             Style::default()
         } else {
             Style::default().bg(config.color_default_stripe)
@@ -839,7 +838,7 @@ pub fn format_value(value: &Value, config: &Config) -> Text<'static> {
                                                 let ascii_part: String = chunk
                                                     .iter()
                                                     .map(|&b| {
-                                                        if b >= 0x20 && b <= 0x7e {
+                                                        if (0x20..=0x7e).contains(&b) {
                                                             b as char
                                                         } else {
                                                             '.'
