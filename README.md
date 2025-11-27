@@ -7,10 +7,15 @@ you can view system, session buses, or both:
 
 ![img](./docs/img/buses.png)
 
+
+ive opted into completley removing the "signal source id" in the tui and instead use the application where the signal originated from. This will make it easier to understand where the signal came from and how it was generated.. details even has the arguments of how the application started.
+
 ## details
-every signal have some details. 
-ive tried to make it as easy as possible to understand what is going on (ie calling a array of dict objects, a struct and showing data as such).
-However you migh disagree, here as its "not the same type", i want to have a way to differentiate between them and have a "simplistic" view for easy debugging, if you are into that sort of thing.
+every signal have some details.  
+ive tried to make it as easy as possible to understand what is going on (ie calling a array of dict objects, a struct and showing data as such).  
+
+However you migh disagree, here as its "not the same type", i want to have a way to differentiate between them and have a "simplistic" view for easy debugging.
+This view will have more focus going forwards.
 ![img](./docs/img/details.png)
 
 
@@ -21,13 +26,11 @@ you can group, by a single or multiple types at once:
 
 
 ## filtering
-filter by type of signal, sender app, path or even if the signal is a reply to another signal. dont worry tho. you can select a active signal and grab properties to filter, so you dont have to remember any syntax.
-
-filter:
+filter by type of signal, sender app, path or even if the signal is a reply to another signal. 
 
 ![img](./docs/img/filter.png)
 
-autofilter:
+dont worry tho. you can select a active signal and grab properties to filter, so you dont have to remember any syntax.
 
 ![img](./docs/img/autofilter.png)
 
