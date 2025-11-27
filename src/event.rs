@@ -124,7 +124,7 @@ pub async fn handle_event(
                                     bus_type, item.sender, item.path
                                 );
 
-                                                                let clipboard_arc_clone = clipboard_arc.clone();
+                                let clipboard_arc_clone = clipboard_arc.clone();
                                 let command_clone = command.clone();
                                 let result = tokio::task::spawn_blocking(move || {
                                     clipboard_arc_clone.lock().unwrap().set_text(command_clone)
@@ -157,7 +157,7 @@ pub async fn handle_event(
                                     Err(e) => format!("Failed to save to file: {}", e),
                                 };
 
-                                                            let clipboard_arc_clone = clipboard_arc.clone();
+                            let clipboard_arc_clone = clipboard_arc.clone();
                             let result = tokio::task::spawn_blocking(move || {
                                 clipboard_arc_clone.lock().unwrap().set_text(text_to_copy)
                             })
