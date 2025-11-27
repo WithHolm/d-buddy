@@ -43,6 +43,9 @@ struct Args {
     /// Enable debug UI elements
     #[arg(long)]
     debug_ui: bool,
+    /// Set the maximum number of messages to keep in memory (rolling window)
+    #[arg(long)]
+    max_messages: Option<usize>,
 }
 
 // Main asynchronous entry point of the application
@@ -82,6 +85,9 @@ async fn main() -> Result<()> {
     };
 
     let mut config = Config::default();
+    if let Some(max_msgs) = args.max_messages {
+        config.max_messages = max_msgs;
+    }
     config.enable_debug_ui = args.debug_ui;
 
     let mut app = App::default();
@@ -119,7 +125,7 @@ fn check_clipboard_utilities() {
     if !is_any_found {
         eprintln!("Error: Clipboard utility not found.");
         eprintln!("d-buddy requires 'xclip', 'xsel', or 'wl-copy' to be installed for clipboard functionality on Linux.");
-        eprintln!("Please install one of them using your system's package manager (e.g., 'sudo apt-get install xclip').");
+        eprintln!("Please install one of them using your system's package manager (e.g., 'sudo pacman -S wl-copy').");
         std::process::exit(1);
     }
 }
@@ -215,7 +221,12 @@ async fn run(
                 BusType::Session | BusType::System => {
                     let _message_collection_span =
                         tracing::info_span!("message_collection_single_bus").entered();
-                    app.messages.get(&app.stream).unwrap().lock().await.clone()
+                    let mut messages = app.messages.get(&app.stream).unwrap().lock().await.clone();
+                    if messages.len() > config.max_messages {
+                        let start = messages.len() - config.max_messages;
+                        messages.drain(0..start);
+                    }
+                    messages
                 }
 
                 BusType::Both => {
@@ -237,6 +248,10 @@ async fn run(
                         let _combined_sort_span =
                             tracing::info_span!("message_collection_combined_sort").entered();
                         combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                    }
+                    if combined_messages.len() > config.max_messages {
+                        let start = combined_messages.len() - config.max_messages;
+                        combined_messages.drain(0..start);
                     }
                     combined_messages
                 }
