@@ -27,6 +27,7 @@ use std::{
 use tokio::time::Instant;
 
 use tracing::instrument;
+use tracing_log::LogTracer;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 /// A simple TUI for browsing D-Bus messages.
@@ -53,6 +54,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let _log_guard = if args.log {
+        tracing_log::LogTracer::init().expect("Failed to set logger");
         let file_appender = tracing_appender::rolling::daily(".", "d-buddy.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
         let subscriber = tracing_subscriber::fmt()

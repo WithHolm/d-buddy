@@ -508,6 +508,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-appender",
+ "tracing-log",
  "tracing-subscriber",
  "tui-input",
  "zbus",
