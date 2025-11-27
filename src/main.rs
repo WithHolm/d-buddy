@@ -27,7 +27,6 @@ use std::{
 use tokio::time::Instant;
 
 use tracing::instrument;
-use tracing_log::LogTracer;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 /// A simple TUI for browsing D-Bus messages.

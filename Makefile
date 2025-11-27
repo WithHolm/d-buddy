@@ -22,5 +22,9 @@ perf:
 	perf record -g --call-graph fp cargo run
 	#--latency --call-graph cargo run
 
+clippy-fix:
+	cargo clippy --fix --bin "d-buddy"
+
+
 clean:
 	cargo clean
