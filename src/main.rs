@@ -10,6 +10,7 @@ use state::{App, Mode};
 // Import necessary crates and modules
 use anyhow::Result; // For simplified error handling
 use arboard::Clipboard; // For clipboard access
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use crossterm::event::EventStream;
@@ -46,6 +47,9 @@ struct Args {
 // Main asynchronous entry point of the application
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    check_clipboard_utilities();
+
     let args = Args::parse();
 
     let _log_guard = if args.log {
@@ -95,6 +99,26 @@ async fn main() -> Result<()> {
         run(&mut terminal, &mut app, &config).await?;
         restore_terminal()?;
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn check_clipboard_utilities() {
+    let utilities = ["xclip", "xsel", "wl-copy"];
+    let is_any_found = utilities.iter().any(|util| {
+        std::process::Command::new(util)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    });
+
+    if !is_any_found {
+        eprintln!("Error: Clipboard utility not found.");
+        eprintln!("d-buddy requires 'xclip', 'xsel', or 'wl-copy' to be installed for clipboard functionality on Linux.");
+        eprintln!("Please install one of them using your system's package manager (e.g., 'sudo apt-get install xclip').");
+        std::process::exit(1);
     }
 }
 
@@ -158,7 +182,7 @@ async fn run(
 ) -> Result<()> {
     let mut event_stream = EventStream::new();
 
-    let mut clipboard = Clipboard::new().unwrap();
+    let clipboard_arc = Arc::new(Mutex::new(Clipboard::new().unwrap()));
 
     let tick_rate = Duration::from_millis(24);
     let min_wait = Duration::from_millis(2);
@@ -215,11 +239,17 @@ async fn run(
                     combined_messages
                 }
             };
+            tracing::debug!("Filtering: all_messages.len() = {}", all_messages.len());
 
             let filter_text = app.input.value();
 
             {
                 let _filter_span = tracing::info_span!("filtering").entered();
+                tracing::debug!(
+                    "Filtering: filter_text = {:?}, filter_criteria = {:?}",
+                    filter_text,
+                    app.filter_criteria
+                );
                 app.filtered_and_sorted_items = all_messages
                     .iter()
                     .filter(|item| match app.mode {
@@ -266,6 +296,10 @@ async fn run(
                     })
                     .cloned()
                     .collect();
+                tracing::debug!(
+                    "Filtering: app.filtered_and_sorted_items.len() after filter = {}",
+                    app.filtered_and_sorted_items.len()
+                );
             }
             {
                 let _sort_span = tracing::info_span!("sorting").entered();
@@ -342,7 +376,7 @@ async fn run(
         // handle any keypress
         if let Ok(Some(Ok(event))) = event_ready {
             let _event_handling_span = tracing::info_span!("handling_user_input").entered();
-            if event::handle_event(app, config, event, &mut clipboard).await? {
+            if event::handle_event(app, config, event, clipboard_arc.clone()).await? {
                 break;
             }
         }

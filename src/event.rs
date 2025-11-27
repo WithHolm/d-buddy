@@ -6,20 +6,18 @@ use arboard::Clipboard;
 use crossterm::event::{Event, KeyCode};
 use ratatui::prelude::*;
 use ratatui::text::{Line, Span, Text};
+use std::sync::{Arc, Mutex};
 
-use std::time::Duration;
 use tokio::fs;
 use tui_input::{backend::crossterm as input_backend, Input};
 use zbus::zvariant::{Structure, Value};
-
-use tokio::time::sleep;
 
 //check for user input/key presses
 pub async fn handle_event(
     app: &mut App,
     config: &Config,
     event: Event,
-    clipboard: &mut Clipboard,
+    clipboard_arc: Arc<Mutex<Clipboard>>,
 ) -> Result<bool> {
     if let Event::Key(key) = event {
         match app.mode {
@@ -125,14 +123,25 @@ pub async fn handle_event(
                                     "dbus-send {} --dest={} {} <interface>.<member>",
                                     bus_type, item.sender, item.path
                                 );
-                                match clipboard.set_text(command.clone()) {
-                                    Ok(_) => {
+
+                                                                let clipboard_arc_clone = clipboard_arc.clone();
+                                let command_clone = command.clone();
+                                let result = tokio::task::spawn_blocking(move || {
+                                    clipboard_arc_clone.lock().unwrap().set_text(command_clone)
+                                })
+                                .await;
+
+                                match result {
+                                    Ok(Ok(_)) => {
                                         app.status_message =
                                             format!("Copied to clipboard: {}", command);
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         app.status_message =
                                             format!("Failed to copy to clipboard: {}", e);
+                                    }
+                                    Err(e) => {
+                                        app.status_message = format!("Copy task failed: {}", e);
                                     }
                                 }
                             }
@@ -140,20 +149,24 @@ pub async fn handle_event(
                     }
                     KeyCode::Char('c') => {
                         if app.show_details {
-                            let text_to_copy_text = app.detail_text.clone();
-                            let text_to_copy = text_to_copy_text.to_string();
+                            let text_to_copy = app.detail_text.to_string();
                             let file_path = "/tmp/d-buddy-details.txt";
                             let file_write_status =
                                 match fs::write(file_path, text_to_copy.as_bytes()).await {
                                     Ok(_) => format!("Saved to {}", file_path),
                                     Err(e) => format!("Failed to save to file: {}", e),
                                 };
-                            let clipboard_status = match clipboard.set_text(text_to_copy) {
-                                Ok(_) => {
-                                    sleep(Duration::from_millis(100)).await;
-                                    "Copied to clipboard!".to_string()
-                                }
-                                Err(e) => format!("Copy failed: {}", e),
+
+                                                            let clipboard_arc_clone = clipboard_arc.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                clipboard_arc_clone.lock().unwrap().set_text(text_to_copy)
+                            })
+                            .await;
+
+                            let clipboard_status = match result {
+                                Ok(Ok(_)) => "Copied to clipboard!".to_string(),
+                                Ok(Err(e)) => format!("Copy failed: {}", e),
+                                Err(e) => format!("Copy task failed: {}", e),
                             };
                             app.status_message =
                                 format!("{} | {}", file_write_status, clipboard_status);

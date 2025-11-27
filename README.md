@@ -5,7 +5,7 @@ tui for dbus monitor using rust
 
 * log: `--log` . also remember to set log level in env: `RUST_LOG=d_buddy=trace`
 * enable debug ui: `--debug-ui`
-* 
+* start and make sure it runs: `--check`
 
 
 

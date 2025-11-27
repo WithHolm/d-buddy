@@ -8,6 +8,230 @@ use ratatui::{
 use std::borrow::Cow;
 use zbus::zvariant::Value;
 
+/// Represents an item in the main list, which can either be a message or a group header.
+enum ViewItem<'a> {
+    Header(String),
+    Message(&'a crate::bus::Item, usize),
+}
+
+/// Builds the list of `ViewItem`s from the filtered business items, inserting group headers where needed.
+fn build_view_items<'a>(app: &App, filtered_items: &'a [crate::bus::Item]) -> Vec<ViewItem<'a>> {
+    let mut view_items = Vec::new();
+    let is_grouped = app
+        .grouping_keys
+        .iter()
+        .any(|k| *k != crate::bus::GroupingType::None);
+
+    if !is_grouped {
+        // If not grouping, just map messages directly
+        view_items.extend(
+            filtered_items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| ViewItem::Message(item, index)),
+        );
+        return view_items;
+    }
+
+    let mut last_group_key_vec: Option<Vec<Cow<'_, str>>> = None;
+    for (item_index, item) in filtered_items.iter().enumerate() {
+        let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
+        for key in &app.grouping_keys {
+            if key == &crate::bus::GroupingType::None {
+                continue;
+            }
+            let group_component: Cow<'_, str> = match key {
+                crate::bus::GroupingType::Sender => item.app_name.as_str().into(),
+                crate::bus::GroupingType::Member => item.member.as_str().into(),
+                crate::bus::GroupingType::Path => item.path.as_str().into(),
+                crate::bus::GroupingType::Serial => item.serial.as_str().into(),
+                crate::bus::GroupingType::None => unreachable!(),
+            };
+            current_group_keys_vec.push(group_component);
+        }
+
+        let group_changed = last_group_key_vec.as_ref() != Some(&current_group_keys_vec);
+        if group_changed {
+            let composite_key = current_group_keys_vec.join("::");
+            view_items.push(ViewItem::Header(composite_key));
+            last_group_key_vec = Some(current_group_keys_vec);
+        }
+        view_items.push(ViewItem::Message(item, item_index));
+    }
+    view_items
+}
+
+/// Creates a `ListItem` for a group header.
+fn create_header_list_item<'a>(text: &'a str, config: &Config) -> ListItem<'a> {
+    let header_spans = vec![Span::styled(
+        text,
+        Style::default().fg(config.color_grouping_header).bold(),
+    )];
+    ListItem::new(Line::from(header_spans))
+}
+
+/// Creates a `ListItem` for a bus message.
+fn create_message_list_item<'a>(
+    item: &'a crate::bus::Item,
+    item_index: usize,
+    app: &App,
+    config: &Config,
+    now: chrono::DateTime<chrono::Local>,
+    is_grouped: bool,
+) -> ListItem<'a> {
+    let indent = if is_grouped { "  " } else { "" };
+    let dt: chrono::DateTime<chrono::Local> = item.timestamp.into();
+    let timestamp = if app.use_relative_time {
+        let duration = now.signed_duration_since(dt).abs();
+        if duration.num_seconds() < 60 {
+            if duration.num_seconds() < 10 {
+                format!("{}s", duration.num_seconds())
+            } else {
+                format!("{}+s", (duration.num_seconds() / 10) * 10)
+            }
+        } else if duration.num_minutes() < 60 {
+            format!("{}m", duration.num_minutes())
+        } else if duration.num_hours() < 24 {
+            format!("{}h", duration.num_hours())
+        } else if duration.num_days() < 365 {
+            format!("{}d", duration.num_days())
+        } else {
+            format!("{}y", duration.num_days() / 365)
+        }
+    } else {
+        dt.format("%H:%M:%S%.3f").to_string()
+    };
+
+    let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
+    let ticker_color = if elapsed_seconds < 60 {
+        super::get_fading_color(config.color_ticker, elapsed_seconds, 60)
+    } else {
+        Color::DarkGray
+    };
+    let ticker_span = if app.enable_lighting_strike {
+        Span::styled("⚡", Style::default().fg(ticker_color))
+    } else {
+        Span::raw("")
+    };
+
+    let sender_info = item.sender_display();
+    let receiver_info = item.receiver_display();
+    let mut spans = Vec::with_capacity(16);
+
+    if config.enable_debug_ui {
+        spans.push(Span::styled(
+            format!("[{}] ", item_index),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    spans.push(Span::raw(indent));
+    spans.push(ticker_span);
+    spans.push(Span::raw(" ["));
+    spans.push(Span::styled(
+        timestamp,
+        if app.show_details {
+            Style::default().fg(config.color_timestamp_details)
+        } else {
+            Style::default().fg(config.color_timestamp_normal)
+        },
+    ));
+    spans.push(Span::raw("]"));
+    spans.push(Span::raw(" "));
+    spans.push(if item.is_reply {
+        Span::raw(" ↩ ")
+    } else {
+        Span::raw("   ")
+    });
+    spans.push(Span::styled(
+        sender_info.into_owned(),
+        if app.show_details {
+            Style::default().fg(config.color_sender_details)
+        } else {
+            Style::default().fg(config.color_sender_normal)
+        },
+    ));
+    if !receiver_info.is_empty() {
+        spans.push(Span::raw(" -> "));
+        spans.push(Span::styled(
+            receiver_info.into_owned(),
+            if app.show_details {
+                Style::default().fg(config.color_sender_details)
+            } else {
+                Style::default().fg(config.color_sender_normal)
+            },
+        ));
+    }
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        item.member.as_str(),
+        if app.show_details {
+            Style::default().fg(config.color_member_details)
+        } else {
+            Style::default().fg(config.color_member_normal)
+        },
+    ));
+    spans.push(Span::raw("@"));
+    spans.push(Span::styled(
+        item.path.as_str(),
+        if app.show_details {
+            Style::default().fg(config.color_path_details)
+        } else {
+            Style::default().fg(config.color_path_normal)
+        },
+    ));
+
+    ListItem::new(Line::from(spans))
+}
+
+/// Creates the `Vec<ListItem>` for the main list, applying virtualization for performance.
+fn create_list_item_widgets<'a>(
+    app: &App,
+    config: &Config,
+    display_items: &'a [ViewItem<'a>],
+    list_area_height: u16,
+) -> Vec<ListItem<'a>> {
+    if display_items.is_empty() {
+        return Vec::new();
+    }
+
+    let _span = tracing::info_span!("list_item_generation").entered();
+    let now = chrono::Local::now();
+    let is_grouped = app
+        .grouping_keys
+        .iter()
+        .any(|k| *k != crate::bus::GroupingType::None);
+
+    let list_height = list_area_height.saturating_sub(2) as usize; // For borders
+    let offset = app.list_state.offset();
+    let overscan = 2; // Render a few items above and below the viewport
+    let render_start = offset.saturating_sub(overscan);
+    let render_end = (offset + list_height + overscan).min(display_items.len());
+
+    display_items
+        .iter()
+        .enumerate()
+        .map(|(i, view_item)| {
+            if i >= render_start && i < render_end {
+                // This item is in the render window, create the full widget
+                match view_item {
+                    ViewItem::Header(text) => create_header_list_item(text, config),
+                    ViewItem::Message(item, original_index) => create_message_list_item(
+                        item,
+                        *original_index,
+                        app,
+                        config,
+                        now,
+                        is_grouped,
+                    ),
+                }
+            } else {
+                // This item is outside the render window, use a cheap placeholder
+                ListItem::new("")
+            }
+        })
+        .collect()
+}
+
 // Draws the application's user interface
 pub fn ui(
     frame: &mut Frame,
@@ -118,175 +342,21 @@ pub fn ui(
 
     title_spans.extend(app.cached_title_suffix.as_ref().unwrap().clone());
 
-    let num_filtered_items = filtered_items.len();
-    if num_filtered_items > 0 {
-        if app.list_state.selected().unwrap_or(0) >= num_filtered_items {
-            app.list_state.select(Some(num_filtered_items - 1));
+    let display_items = build_view_items(app, filtered_items);
+    let num_display_items = display_items.len();
+
+    if num_display_items > 0 {
+        if app.list_state.selected().unwrap_or(0) >= num_display_items {
+            app.list_state.select(Some(num_display_items - 1));
         }
     } else {
         app.list_state.select(None);
     }
 
-    let mut visible_items: Vec<ListItem> = Vec::with_capacity(num_filtered_items);
-    if num_filtered_items > 0 {
-        let _list_item_generation_span = tracing::info_span!("list_item_generation").entered();
-        let now = chrono::Local::now();
-
-        let list_area_height = main_chunks[0].height.saturating_sub(2) as usize;
-        let offset = app.list_state.offset();
-        let overscan = 2;
-        let render_start = offset.saturating_sub(overscan);
-        let render_end = offset
-            .saturating_add(list_area_height)
-            .saturating_add(overscan);
-
-        let mut last_group_key_vec: Option<Vec<Cow<'_, str>>> = None;
-
-        for (item_index, item) in filtered_items.iter().enumerate() {
-            let mut current_group_keys_vec: Vec<Cow<'_, str>> = Vec::new();
-            let mut is_grouped = false;
-            for key in &app.grouping_keys {
-                if key == &crate::bus::GroupingType::None {
-                    continue;
-                }
-                is_grouped = true;
-                let group_component: Cow<'_, str> = match key {
-                    crate::bus::GroupingType::Sender => item.app_name.as_str().into(),
-                    crate::bus::GroupingType::Member => item.member.as_str().into(),
-                    crate::bus::GroupingType::Path => item.path.as_str().into(),
-                    crate::bus::GroupingType::Serial => item.serial.as_str().into(),
-                    crate::bus::GroupingType::None => unreachable!(),
-                };
-                current_group_keys_vec.push(group_component);
-            }
-
-            if is_grouped {
-                let group_changed = last_group_key_vec.as_ref() != Some(&current_group_keys_vec);
-                if group_changed {
-                    if visible_items.len() >= render_start && visible_items.len() < render_end {
-                        let current_group_keys_composite = current_group_keys_vec.join("::");
-                        let header_spans = vec![Span::styled(
-                            current_group_keys_composite,
-                            Style::default().fg(config.color_grouping_header).bold(),
-                        )];
-                        visible_items.push(ListItem::new(Line::from(header_spans)));
-                    } else {
-                        visible_items.push(ListItem::new(""));
-                    }
-                    last_group_key_vec = Some(current_group_keys_vec);
-                }
-            }
-
-            if visible_items.len() >= render_start && visible_items.len() < render_end {
-                let indent = if is_grouped { "  " } else { "" };
-                let dt: chrono::DateTime<chrono::Local> = item.timestamp.into();
-                let timestamp = if app.use_relative_time {
-                    let duration = now.signed_duration_since(dt).abs();
-                    if duration.num_seconds() < 60 {
-                        if duration.num_seconds() < 10 {
-                            format!("{}s", duration.num_seconds())
-                        } else {
-                            format!("{}+s", (duration.num_seconds() / 10) * 10)
-                        }
-                    } else if duration.num_minutes() < 60 {
-                        format!("{}m", duration.num_minutes())
-                    } else if duration.num_hours() < 24 {
-                        format!("{}h", duration.num_hours())
-                    } else if duration.num_days() < 365 {
-                        format!("{}d", duration.num_days())
-                    } else {
-                        format!("{}y", duration.num_days() / 365)
-                    }
-                } else {
-                    dt.format("%H:%M:%S%.3f").to_string()
-                };
-
-                let elapsed_seconds = now.signed_duration_since(dt).num_seconds().max(0) as u64;
-                let ticker_color = if elapsed_seconds < 60 {
-                    super::get_fading_color(config.color_ticker, elapsed_seconds, 60)
-                } else {
-                    Color::DarkGray
-                };
-                let mut ticker_span = Span::raw("");
-                if app.enable_lighting_strike {
-                    ticker_span = Span::styled("⚡", Style::default().fg(ticker_color));
-                }
-
-                let sender_info = item.sender_display();
-                let receiver_info = item.receiver_display();
-                let mut spans = Vec::with_capacity(16);
-
-                if config.enable_debug_ui {
-                    spans.push(Span::styled(
-                        format!("[{}] ", item_index),
-                        Style::default().fg(Color::Red),
-                    ));
-                }
-                spans.push(Span::raw(indent));
-                spans.push(ticker_span);
-                spans.push(Span::raw(" ["));
-                spans.push(Span::styled(
-                    timestamp,
-                    if app.show_details {
-                        Style::default().fg(config.color_timestamp_details)
-                    } else {
-                        Style::default().fg(config.color_timestamp_normal)
-                    },
-                ));
-                spans.push(Span::raw("]"));
-                spans.push(Span::raw(" "));
-                spans.push(if item.is_reply {
-                    Span::raw(" ↩ ")
-                } else {
-                    Span::raw("   ")
-                });
-                spans.push(Span::styled(
-                    sender_info.into_owned(),
-                    if app.show_details {
-                        Style::default().fg(config.color_sender_details)
-                    } else {
-                        Style::default().fg(config.color_sender_normal)
-                    },
-                ));
-                if !receiver_info.is_empty() {
-                    spans.push(Span::raw(" -> "));
-                    spans.push(Span::styled(
-                        receiver_info.into_owned(),
-                        if app.show_details {
-                            Style::default().fg(config.color_sender_details)
-                        } else {
-                            Style::default().fg(config.color_sender_normal)
-                        },
-                    ));
-                }
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    item.member.as_str(),
-                    if app.show_details {
-                        Style::default().fg(config.color_member_details)
-                    } else {
-                        Style::default().fg(config.color_member_normal)
-                    },
-                ));
-                spans.push(Span::raw("@"));
-                spans.push(Span::styled(
-                    item.path.as_str(),
-                    if app.show_details {
-                        Style::default().fg(config.color_path_details)
-                    } else {
-                        Style::default().fg(config.color_path_normal)
-                    },
-                ));
-
-                visible_items.push(ListItem::new(Line::from(spans)));
-            } else {
-                visible_items.push(ListItem::new(""));
-            }
-        }
-    };
+    let list_items = create_list_item_widgets(app, config, &display_items, main_chunks[0].height);
 
     // Create the List widget for displaying D-Bus messages
-    let list = List::new(visible_items)
+    let list = List::new(list_items)
         .block(
             Block::default()
                 .title(title_spans) // Set title for the block
@@ -304,7 +374,22 @@ pub fn ui(
         frame.render_stateful_widget(list, main_chunks[0], &mut app.list_state);
     }
 
-    // Render Filtering popup as an overlay if in Mode::Filtering
+    // Render popups and overlays
+    render_overlays(frame, app, config, &display_items, filtered_items);
+
+    // Render the status bar at the bottom
+    render_status_bar(frame, app, config, chunks[1]);
+}
+
+/// Renders various popups/overlays based on the application's current mode.
+fn render_overlays(
+    frame: &mut Frame,
+    app: &mut App,
+    config: &Config,
+    display_items: &[ViewItem],
+    _filtered_items: &[crate::bus::Item],
+) {
+    // Render Filtering popup
     if let Mode::Filtering = app.mode {
         let _span = tracing::info_span!("render_filtering_popup").entered();
         let percent_x = 80;
@@ -313,7 +398,7 @@ pub fn ui(
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0), // Center vertically
+                Constraint::Min(0),
                 Constraint::Length(3),
                 Constraint::Min(0),
             ])
@@ -351,7 +436,7 @@ pub fn ui(
         frame.render_widget(input, inner_area);
     }
 
-    // Render AutoFilterSelection popup as an overlay if in Mode::AutoFilterSelection
+    // Render AutoFilterSelection popup
     if let Mode::AutoFilterSelection = app.mode {
         let _span = tracing::info_span!("render_autofilter_selection_popup").entered();
         let area = centered_rect(60, 30, frame.area());
@@ -363,14 +448,12 @@ pub fn ui(
 
         let inner_area = block.inner(area);
 
-        let autofilter_options = ["sender", "member", "path", "serial", "reply_serial"];
-        let mut list_items: Vec<ListItem> = Vec::new();
-
+        let mut list_items = Vec::new();
         if let Some(selected_index) = app.list_state.selected() {
-            tracing::debug!("AutoFilterSelection: selected_index = {:?}, filtered_and_sorted_items.len() = {}", selected_index, app.filtered_and_sorted_items.len());
-            if let Some(item) = app.filtered_and_sorted_items.get(selected_index) {
+            if let Some(ViewItem::Message(item, _)) = display_items.get(selected_index) {
+                let autofilter_options = ["sender", "member", "path", "serial", "reply_serial"];
                 for &option in autofilter_options.iter() {
-                    let example_value: std::borrow::Cow<'_, str> = match option {
+                    let example_value: Cow<'_, str> = match option {
                         "sender" => item.sender_display(),
                         "member" => item.member.as_str().into(),
                         "path" => item.path.as_str().into(),
@@ -386,9 +469,7 @@ pub fn ui(
                         ),
                     ])));
                 }
-            } else { /* ... */
             }
-        } else { /* ... */
         }
 
         let list = List::new(list_items)
@@ -404,7 +485,87 @@ pub fn ui(
         frame.render_stateful_widget(list, inner_area, &mut app.autofilter_selection_state);
     }
 
-    // If show_details is true, render the message details popup
+    // Render GroupingSelection popup
+    if let Mode::GroupingSelection = app.mode {
+        let _span = tracing::info_span!("render_grouping_selection_popup").entered();
+        let all_grouping_options = [
+            crate::bus::GroupingType::Sender,
+            crate::bus::GroupingType::Member,
+            crate::bus::GroupingType::Path,
+            crate::bus::GroupingType::Serial,
+            crate::bus::GroupingType::None,
+        ];
+        let list_display_options: Vec<String> = all_grouping_options
+            .iter()
+            .map(|gt| gt.to_string())
+            .collect();
+
+        let popup_height = (list_display_options.len() + 2) as u16;
+        let popup_width = 30;
+
+        let area = {
+            let vertical_padding = (frame.area().height.saturating_sub(popup_height)) / 2;
+            let horizontal_padding = (frame.area().width.saturating_sub(popup_width)) / 2;
+            let a = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(vertical_padding),
+                    Constraint::Length(popup_height),
+                    Constraint::Length(vertical_padding),
+                ])
+                .split(frame.area());
+
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(horizontal_padding),
+                    Constraint::Length(popup_width),
+                    Constraint::Length(horizontal_padding),
+                ])
+                .split(a[1])[1]
+        };
+        let block = Block::default()
+            .title("Select Grouping")
+            .borders(Borders::ALL);
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+
+        let inner_area = block.inner(area);
+
+        let list_items: Vec<ListItem> = list_display_options
+            .iter()
+            .enumerate()
+            .map(|(i, option_str)| {
+                let grouping_type = all_grouping_options[i];
+                let mut spans = vec![];
+
+                if app.grouping_keys.contains(&grouping_type) {
+                    spans.push(Span::styled(
+                        "● ",
+                        Style::default().fg(config.color_grouping_active_indicator),
+                    ));
+                } else {
+                    spans.push(Span::raw("  "));
+                }
+                spans.push(Span::raw(option_str.clone()));
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+
+        let list = List::new(list_items)
+            .block(Block::default())
+            .highlight_symbol("> ")
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(config.color_selection_highlight_fg)
+                    .bg(config.color_selection_highlight_bg),
+            );
+
+        frame.render_stateful_widget(list, inner_area, &mut app.grouping_selection_state);
+    }
+
+    // Render message details popup
     if app.show_details {
         let _span = tracing::info_span!("render_details_view_popup").entered();
         let area = centered_rect(80, 80, frame.area());
@@ -418,10 +579,8 @@ pub fn ui(
         }
         app.detail_scroll = app.detail_scroll.min(max_scroll);
 
-        // Check if scrolling is possible
         let can_scroll_up = app.detail_scroll > 0;
         let can_scroll_down = app.detail_scroll + popup_inner_height < num_text_lines;
-        // Create a dynamic title with scroll indicators
         let scroll_indicator = match (can_scroll_up, can_scroll_down) {
             (true, true) => "[↑...↓]",
             (true, false) => "[↑...]",
@@ -435,159 +594,19 @@ pub fn ui(
         ]);
         let block = Block::default().title(title_spans).borders(Borders::ALL);
 
-        // Create a Paragraph widget with the pre-formatted detail text and scroll state
         let paragraph = Paragraph::new(app.detail_text.clone())
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((app.detail_scroll, 0));
 
-        frame.render_widget(Clear, area); // Clear the background behind the popup
-        frame.render_widget(paragraph, area); // Render the details paragraph
+        frame.render_widget(Clear, area);
+        frame.render_widget(paragraph, area);
     }
+}
 
-    // Render the appropriate keybinds/status in the bottom chunk based on the current mode
-    match app.mode {
-        Mode::Filtering => {
-            let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
-            let help_paragraph = Paragraph::new(key_hints)
-                .block(Block::default().borders(Borders::ALL).title("Keys"));
-            frame.render_widget(help_paragraph, chunks[1]);
-        }
-        Mode::Normal => {
-            let help_text = if !app.status_message.is_empty() {
-                Line::from(app.status_message.as_str().fg(config.color_status_message))
-            } else if app.show_details {
-                app.cached_normal_details_key_hints
-                    .as_ref()
-                    .unwrap()
-                    .clone()
-            } else {
-                app.cached_normal_key_hints.as_ref().unwrap().clone()
-            };
-            let help_paragraph = Paragraph::new(help_text)
-                .block(Block::default().borders(Borders::ALL).title("Keys"));
-            frame.render_widget(help_paragraph, chunks[1]);
-        }
-        Mode::AutoFilterSelection => {
-            let help_paragraph = Paragraph::new(
-                app.cached_autofilter_selection_key_hints
-                    .as_ref()
-                    .unwrap()
-                    .clone(),
-            )
-            .block(Block::default().borders(Borders::ALL).title("Autofilter"));
-            frame.render_widget(help_paragraph, chunks[1]);
-        }
-        Mode::ThreadView => {
-            let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
-            let mut thread_view_line = Line::from(vec![
-                Span::raw("Thread View (Serial: "),
-                Span::styled(
-                    thread_serial_display,
-                    Style::default().fg(config.color_thread_serial),
-                ),
-                Span::raw(") | "),
-            ]);
-            thread_view_line.extend(app.cached_thread_view_key_hints.as_ref().unwrap().clone());
-            let help_paragraph = Paragraph::new(thread_view_line)
-                .block(Block::default().borders(Borders::ALL).title("Thread View"));
-            frame.render_widget(help_paragraph, chunks[1]);
-        }
-        Mode::GroupingSelection => {
-            let _span = tracing::info_span!("render_grouping_selection_popup").entered();
-            let all_grouping_options = [
-                crate::bus::GroupingType::Sender,
-                crate::bus::GroupingType::Member,
-                crate::bus::GroupingType::Path,
-                crate::bus::GroupingType::Serial,
-                crate::bus::GroupingType::None,
-            ];
-            let list_display_options: Vec<String> = all_grouping_options
-                .iter()
-                .map(|gt| gt.to_string())
-                .collect();
-
-            let popup_height = (list_display_options.len() + 2) as u16; // 2 for borders
-            let popup_width = 30; // Static width as requested
-
-            let area = {
-                let vertical_padding = (frame.area().height.saturating_sub(popup_height)) / 2;
-                let horizontal_padding = (frame.area().width.saturating_sub(popup_width)) / 2;
-                let a = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(
-                        [
-                            Constraint::Length(vertical_padding),
-                            Constraint::Length(popup_height),
-                            Constraint::Length(vertical_padding),
-                        ]
-                        .as_ref(),
-                    )
-                    .split(frame.area());
-
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(
-                        [
-                            Constraint::Length(horizontal_padding),
-                            Constraint::Length(popup_width),
-                            Constraint::Length(horizontal_padding),
-                        ]
-                        .as_ref(),
-                    )
-                    .split(a[1])[1]
-            };
-            let block = Block::default()
-                .title("Select Grouping")
-                .borders(Borders::ALL);
-            frame.render_widget(Clear, area);
-            frame.render_widget(&block, area);
-
-            let inner_area = block.inner(area);
-
-            let list_items: Vec<ListItem> = list_display_options
-                .iter()
-                .enumerate()
-                .map(|(i, option_str)| {
-                    let grouping_type = all_grouping_options[i];
-                    let mut spans = vec![];
-
-                    if app.grouping_keys.contains(&grouping_type) {
-                        spans.push(Span::styled(
-                            "● ",
-                            Style::default().fg(config.color_grouping_active_indicator),
-                        ));
-                    } else {
-                        spans.push(Span::raw("  "));
-                    }
-                    spans.push(Span::raw(option_str.clone()));
-                    ListItem::new(Line::from(spans))
-                })
-                .collect();
-
-            let list = List::new(list_items)
-                .block(Block::default())
-                .highlight_symbol("> ")
-                .highlight_style(
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .fg(config.color_selection_highlight_fg)
-                        .bg(config.color_selection_highlight_bg),
-                );
-
-            frame.render_stateful_widget(list, inner_area, &mut app.grouping_selection_state);
-        }
-    }
-
-    // Render the appropriate keybinds/status in the bottom chunk based on the current mode
-    match app.mode {
-        Mode::Filtering => {
-            let _span = tracing::info_span!("render_bottom_keybinds_filtering").entered();
-            let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
-            let help_paragraph = Paragraph::new(key_hints)
-                .block(Block::default().borders(Borders::ALL).title("Keys"));
-            frame.render_widget(help_paragraph, chunks[1]);
-        }
+/// Renders the status bar at the bottom of the screen.
+fn render_status_bar(frame: &mut Frame, app: &mut App, config: &Config, area: Rect) {
+    let help_paragraph = match app.mode {
         Mode::Normal => {
             let _span = tracing::info_span!("render_bottom_keybinds_normal").entered();
             let help_text = if !app.status_message.is_empty() {
@@ -600,21 +619,23 @@ pub fn ui(
             } else {
                 app.cached_normal_key_hints.as_ref().unwrap().clone()
             };
-            let help_paragraph = Paragraph::new(help_text)
-                .block(Block::default().borders(Borders::ALL).title("Keys"));
-            frame.render_widget(help_paragraph, chunks[1]);
+            Paragraph::new(help_text).block(Block::default().borders(Borders::ALL).title("Keys"))
+        }
+        Mode::Filtering => {
+            let _span = tracing::info_span!("render_bottom_keybinds_filtering").entered();
+            let key_hints = app.cached_filtering_key_hints.as_ref().unwrap().clone();
+            Paragraph::new(key_hints).block(Block::default().borders(Borders::ALL).title("Keys"))
         }
         Mode::AutoFilterSelection => {
             let _span =
                 tracing::info_span!("render_bottom_keybinds_autofilter_selection").entered();
-            let help_paragraph = Paragraph::new(
+            Paragraph::new(
                 app.cached_autofilter_selection_key_hints
                     .as_ref()
                     .unwrap()
                     .clone(),
             )
-            .block(Block::default().borders(Borders::ALL).title("Autofilter"));
-            frame.render_widget(help_paragraph, chunks[1]);
+            .block(Block::default().borders(Borders::ALL).title("Autofilter"))
         }
         Mode::ThreadView => {
             let _span = tracing::info_span!("render_bottom_keybinds_thread_view").entered();
@@ -628,22 +649,21 @@ pub fn ui(
                 Span::raw(") | "),
             ]);
             thread_view_line.extend(app.cached_thread_view_key_hints.as_ref().unwrap().clone());
-            let help_paragraph = Paragraph::new(thread_view_line)
-                .block(Block::default().borders(Borders::ALL).title("Thread View"));
-            frame.render_widget(help_paragraph, chunks[1]);
+            Paragraph::new(thread_view_line)
+                .block(Block::default().borders(Borders::ALL).title("Thread View"))
         }
         Mode::GroupingSelection => {
             let _span = tracing::info_span!("render_bottom_keybinds_grouping_selection").entered();
-            let help_paragraph = Paragraph::new(
+            Paragraph::new(
                 app.cached_grouping_selection_key_hints
                     .as_ref()
                     .unwrap()
                     .clone(),
             )
-            .block(Block::default().borders(Borders::ALL).title("Grouping"));
-            frame.render_widget(help_paragraph, chunks[1]);
+            .block(Block::default().borders(Borders::ALL).title("Grouping"))
         }
-    }
+    };
+    frame.render_widget(help_paragraph, area);
 }
 
 // Helper function to format a `zbus::zvariant::Value` in a YAML-like, readable way.
