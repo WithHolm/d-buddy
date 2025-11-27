@@ -13,7 +13,7 @@ futures = "0.3.31"
 crossterm = { version = "0.28.0", features = ["event-stream"] }
 anyhow = "1.0.100"
 tui-input = "0.13.0"
-arboard = "3.4.0"
+arboard = { version = "3.4.0", features = ["log"] }
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
 chrono-humanize = "0.2.3"
