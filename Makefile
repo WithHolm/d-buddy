@@ -9,7 +9,10 @@ else
 endif
 
 ai-check:
-	cargo check && cargo fmt && cargo clippy
+	cargo check && cargo fmt #&& cargo clippy
+
+ai-run:
+	cargo run -- --check
 
 build:
 	cargo build

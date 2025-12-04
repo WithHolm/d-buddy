@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::read;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tracing::instrument;
 use zbus::{fdo::DBusProxy, Connection, MessageStream};
 
@@ -190,9 +190,7 @@ async fn get_process_info(
     Some(info)
 }
 
-pub async fn dbus_listener(t: BusType) -> Result<Arc<Mutex<Vec<Item>>>> {
-    let messages = Arc::new(Mutex::new(Vec::new()));
-    let messages_clone = Arc::clone(&messages);
+pub async fn dbus_listener(t: BusType, sender: mpsc::Sender<Item>) -> Result<()> {
     let cache = Arc::new(Mutex::new(HashMap::<String, ProcessInfo>::new()));
 
     let conn: Connection = match t {
@@ -315,9 +313,12 @@ pub async fn dbus_listener(t: BusType) -> Result<Arc<Mutex<Vec<Item>>>> {
                 receiver_app_args: receiver_app_args_val,
             };
 
-            messages_clone.lock().await.push(item);
+            if sender.send(item).await.is_err() {
+                // receiver is closed
+                break;
+            }
         }
     });
 
-    Ok(messages)
+    Ok(())
 }

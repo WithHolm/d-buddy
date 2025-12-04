@@ -5,8 +5,7 @@ use ratatui::{
     widgets::ListState,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, error::TryRecvError};
 use tui_input::Input;
 
 // Enum to define the current operating mode of the application
@@ -22,7 +21,10 @@ pub enum Mode {
 // Main application struct holding all the state
 pub struct App {
     pub stream: BusType,
-    pub messages: HashMap<BusType, Arc<Mutex<Vec<Item>>>>,
+    session_receiver: mpsc::Receiver<Item>,
+    system_receiver: mpsc::Receiver<Item>,
+    all_session_items: Vec<Item>,
+    all_system_items: Vec<Item>,
     pub filtered_and_sorted_items: Vec<Item>,
     pub list_state: ListState, // State of the message list widget (e.g., selected item)
     pub show_details: bool,    // Flag to indicate if message details popup should be shown
@@ -56,20 +58,22 @@ pub struct App {
     pub cached_title_suffix: Option<Line<'static>>,
 }
 
-// Default implementation for the App struct
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new(session_receiver: mpsc::Receiver<Item>, system_receiver: mpsc::Receiver<Item>) -> Self {
         App {
             stream: BusType::Session,
-            messages: HashMap::new(), // Initialize with an empty list of messages
+            session_receiver,
+            system_receiver,
+            all_session_items: Vec::new(),
+            all_system_items: Vec::new(),
             filtered_and_sorted_items: Vec::new(),
-            list_state: ListState::default(), // Default list state (no item selected)
-            show_details: false,              // Details popup is hidden by default
-            mode: Mode::Normal,               // Start in Normal mode
-            input: Input::default(),          // Empty input buffer
-            detail_text: Text::default(),     // No detail text initially
-            detail_scroll: 0,                 // Start with no scroll
-            status_message: String::new(),    // No status message initially
+            list_state: ListState::default(),
+            show_details: false,
+            mode: Mode::Normal,
+            input: Input::default(),
+            detail_text: Text::default(),
+            detail_scroll: 0,
+            status_message: String::new(),
             thread_serial: None,
             detail_scroll_request: None,
             filter_criteria: HashMap::new(),
@@ -93,9 +97,47 @@ impl Default for App {
             cached_title_suffix: None,
         }
     }
-}
 
-impl App {
+    pub fn poll_session_messages(&mut self) -> Result<Item, TryRecvError> {
+        self.session_receiver.try_recv()
+    }
+
+    pub fn poll_system_messages(&mut self) -> Result<Item, TryRecvError> {
+        self.system_receiver.try_recv()
+    }
+
+    pub fn get_session_items(&self) -> &[Item] {
+        &self.all_session_items
+    }
+
+    pub fn get_system_items(&self) -> &[Item] {
+        &self.all_system_items
+    }
+
+    pub fn add_session_item(&mut self, item: Item) {
+        self.all_session_items.push(item);
+    }
+
+    pub fn add_system_item(&mut self, item: Item) {
+        self.all_system_items.push(item);
+    }
+
+    pub fn session_items_len(&self) -> usize {
+        self.all_session_items.len()
+    }
+
+    pub fn system_items_len(&self) -> usize {
+        self.all_system_items.len()
+    }
+
+    pub fn drain_session_items(&mut self, range: std::ops::Range<usize>) {
+        self.all_session_items.drain(range);
+    }
+
+    pub fn drain_system_items(&mut self, range: std::ops::Range<usize>) {
+        self.all_system_items.drain(range);
+    }
+
     pub fn initialize_static_ui_elements(&mut self, config: &crate::config::Config) {
         // "Console too small" message
         self.cached_console_too_small_message = Some(Line::from(

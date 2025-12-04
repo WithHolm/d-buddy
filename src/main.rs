@@ -24,7 +24,7 @@ use std::{
     io::{self, stdout},
     time::Duration,
 };
-use tokio::time::Instant;
+use tokio::{sync::mpsc, time::Instant};
 
 use tracing::instrument;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
@@ -89,12 +89,14 @@ async fn main() -> Result<()> {
     }
     config.enable_debug_ui = args.debug_ui;
 
-    let mut app = App::default();
+    let (session_sender, session_receiver) = mpsc::channel(1024);
+    let (system_sender, system_receiver) = mpsc::channel(1024);
+
+    bus::dbus_listener(BusType::Session, session_sender).await?;
+    bus::dbus_listener(BusType::System, system_sender).await?;
+
+    let mut app = App::new(session_receiver, system_receiver);
     app.initialize_static_ui_elements(&config);
-    let session_messages = bus::dbus_listener(BusType::Session).await?;
-    let system_messages = bus::dbus_listener(BusType::System).await?;
-    app.messages.insert(BusType::Session, session_messages);
-    app.messages.insert(BusType::System, system_messages);
 
     if args.check {
         println!("Check mode: Setup successful. App initialized and listeners started.");
@@ -198,64 +200,57 @@ async fn run(
         tracing::debug!("Start of loop: selected = {:?}", app.list_state.selected());
         let loop_timer = Instant::now();
         let _main_loop_span = tracing::debug_span!("main_loop").entered();
-        let session_count = if let Some(arc) = app.messages.get(&BusType::Session) {
-            arc.lock().await.len()
-        } else {
-            0
-        };
 
-        let system_count = if let Some(arc) = app.messages.get(&BusType::System) {
-            arc.lock().await.len()
-        } else {
-            0
-        };
+        // Drain messages from channels
+        while let Ok(item) = app.poll_session_messages() {
+            app.add_session_item(item);
+        }
+        if app.session_items_len() > config.max_messages {
+            let excess = app.session_items_len() - config.max_messages;
+            app.drain_session_items(0..excess);
+        }
 
+        while let Ok(item) = app.poll_system_messages() {
+            app.add_system_item(item);
+        }
+        if app.system_items_len() > config.max_messages {
+            let excess = app.system_items_len() - config.max_messages;
+            app.drain_system_items(0..excess);
+        }
+
+        let session_count = app.session_items_len();
+        let system_count = app.system_items_len();
         let both_count = session_count + system_count;
 
         // Create a scope to ensure the lock is released before drawing
 
         {
             let _processing_span = tracing::info_span!("message_processing").entered();
-            let all_messages = match app.stream {
-                BusType::Session | BusType::System => {
-                    let _message_collection_span =
-                        tracing::info_span!("message_collection_single_bus").entered();
-                    let mut messages = app.messages.get(&app.stream).unwrap().lock().await.clone();
-                    if messages.len() > config.max_messages {
-                        let start = messages.len() - config.max_messages;
-                        messages.drain(0..start);
-                    }
-                    messages
-                }
-
+            let processed_messages: Vec<Item> = match app.stream {
+                BusType::Session => app.get_session_items().to_vec(),
+                BusType::System => app.get_system_items().to_vec(),
                 BusType::Both => {
-                    let mut combined_messages: Vec<Item> = Vec::new();
-
-                    if let Some(session_arc) = app.messages.get(&BusType::Session) {
-                        let _session_extend_span =
-                            tracing::info_span!("message_collection_extend_session").entered();
-                        combined_messages.extend(session_arc.lock().await.iter().cloned());
+                    let session_items = app.get_session_items();
+                    let system_items = app.get_system_items();
+                    let mut combined =
+                        Vec::with_capacity(session_items.len() + system_items.len());
+                    combined.extend(session_items.iter().cloned());
+                    combined.extend(system_items.iter().cloned());
+                    combined.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                    // Also trim the combined view if it exceeds max_messages
+                    if combined.len() > config.max_messages {
+                        let start = combined.len() - config.max_messages;
+                        combined.drain(0..start);
                     }
-
-                    if let Some(system_arc) = app.messages.get(&BusType::System) {
-                        let _system_extend_span =
-                            tracing::info_span!("message_collection_extend_system").entered();
-                        combined_messages.extend(system_arc.lock().await.iter().cloned());
-                    }
-
-                    {
-                        let _combined_sort_span =
-                            tracing::info_span!("message_collection_combined_sort").entered();
-                        combined_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-                    }
-                    if combined_messages.len() > config.max_messages {
-                        let start = combined_messages.len() - config.max_messages;
-                        combined_messages.drain(0..start);
-                    }
-                    combined_messages
+                    combined
                 }
             };
-            tracing::debug!("Filtering: all_messages.len() = {}", all_messages.len());
+
+            // A future optimization would be to use references and avoid this clone.
+            tracing::debug!(
+                "Filtering: processed_messages.len() = {}",
+                processed_messages.len()
+            );
 
             let filter_text = app.input.value();
 
@@ -266,8 +261,8 @@ async fn run(
                     filter_text,
                     app.filter_criteria
                 );
-                app.filtered_and_sorted_items = all_messages
-                    .iter()
+                app.filtered_and_sorted_items = processed_messages
+                    .into_iter() // Use into_iter to consume the vector
                     .filter(|item| match app.mode {
                         Mode::ThreadView => {
                             if let Some(thread_serial) = &app.thread_serial {
@@ -310,7 +305,6 @@ async fn run(
                             passes_field_filters && passes_general_filter
                         }
                     })
-                    .cloned()
                     .collect();
                 tracing::debug!(
                     "Filtering: app.filtered_and_sorted_items.len() after filter = {}",
