@@ -16,15 +16,10 @@ build:
 
 # run as cargo with logging and tracing enabled..
 run:
-    RUST_LOG=d_buddy=trace cargo run -- --log
+	RUST_LOG=d_buddy=trace cargo run -- --log
 
 perf:
 	perf record -g --call-graph fp cargo run
-	#--latency --call-graph cargo run
 
 clippy-fix:
 	cargo clippy --fix --bin "d-buddy"
-
-
-clean:
-	cargo clean

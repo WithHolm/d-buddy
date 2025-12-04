@@ -79,6 +79,7 @@ fn create_message_list_item<'a>(
     now: chrono::DateTime<chrono::Local>,
     is_grouped: bool,
 ) -> ListItem<'a> {
+    let _span = tracing::info_span!("create_message_list_item").entered();
     let indent = if is_grouped { "  " } else { "" };
     let dt: chrono::DateTime<chrono::Local> = item.timestamp.into();
     let timestamp = if app.use_relative_time {
@@ -668,6 +669,7 @@ fn render_status_bar(frame: &mut Frame, app: &mut App, config: &Config, area: Re
 
 // Helper function to format a `zbus::zvariant::Value` in a YAML-like, readable way.
 pub fn format_value(value: &Value, config: &Config) -> Text<'static> {
+    let _span = tracing::info_span!("format_value").entered();
     // Inner recursive function to handle nesting and indentation.
     fn format_recursive(
         value: &Value,
