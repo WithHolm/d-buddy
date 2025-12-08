@@ -14,7 +14,7 @@ pub enum Mode {
     Normal,              // Default mode for browsing D-Bus messages
     Filtering,           // Mode for entering a filter string
     AutoFilterSelection, // Mode for selecting autofilter field
-    ThreadView,          // Mode for viewing a specific message thread
+    ConversationView,    // Mode for viewing a specific message conversation
     GroupingSelection,   // Mode for selecting a grouping option
 }
 
@@ -33,7 +33,7 @@ pub struct App {
     pub detail_text: Text<'static>, // The formatted string for the currently viewed detail
     pub detail_scroll: u16,    // The vertical scroll offset for the detail view
     pub status_message: String, // A temporary message to show in the status bar
-    pub thread_serial: Option<String>,
+    pub conversation_serial: Option<String>,
     pub detail_scroll_request: Option<i32>,
     pub filter_criteria: HashMap<String, String>,
     pub grouping_keys: Vec<crate::bus::GroupingType>,
@@ -43,13 +43,14 @@ pub struct App {
     pub min_height: u16,
     pub use_relative_time: bool,
     pub enable_lighting_strike: bool,
+    pub follow: bool,
 
     // Cached static UI elements
     pub cached_filtering_key_hints: Option<Line<'static>>,
     pub cached_normal_details_key_hints: Option<Line<'static>>,
     pub cached_normal_key_hints: Option<Line<'static>>,
     pub cached_autofilter_selection_key_hints: Option<Line<'static>>,
-    pub cached_thread_view_key_hints: Option<Line<'static>>,
+    pub cached_conversation_view_key_hints: Option<Line<'static>>,
     pub cached_grouping_selection_key_hints: Option<Line<'static>>,
     pub cached_console_too_small_message: Option<Line<'static>>,
 
@@ -74,7 +75,7 @@ impl App {
             detail_text: Text::default(),
             detail_scroll: 0,
             status_message: String::new(),
-            thread_serial: None,
+            conversation_serial: None,
             detail_scroll_request: None,
             filter_criteria: HashMap::new(),
             grouping_keys: vec![crate::bus::GroupingType::None],
@@ -84,13 +85,14 @@ impl App {
             min_height: 20,
             use_relative_time: false,
             enable_lighting_strike: false,
+            follow: true,
 
             // Initialize cached elements as None
             cached_filtering_key_hints: None,
             cached_normal_details_key_hints: None,
             cached_normal_key_hints: None,
             cached_autofilter_selection_key_hints: None,
-            cached_thread_view_key_hints: None,
+            cached_conversation_view_key_hints: None,
             cached_grouping_selection_key_hints: None,
             cached_console_too_small_message: None,
             cached_title_prefix: None,
@@ -138,6 +140,14 @@ impl App {
         self.all_system_items.drain(range);
     }
 
+    pub fn clear_session_items(&mut self) {
+        self.all_session_items.clear();
+    }
+
+    pub fn clear_system_items(&mut self) {
+        self.all_system_items.clear();
+    }
+
     pub fn initialize_static_ui_elements(&mut self, config: &crate::config::Config) {
         // "Console too small" message
         self.cached_console_too_small_message = Some(Line::from(
@@ -178,8 +188,10 @@ impl App {
             ": quit | ".into(),
             "Tab".bold().fg(config.color_keybind_key),
             ": view | ".into(),
-            "t".bold().fg(config.color_keybind_key),
+            "T".bold().fg(config.color_keybind_key),
             ": time | ".into(),
+            "F".bold().fg(config.color_keybind_key),
+            ": follow | ".into(),
             "f".bold().fg(config.color_keybind_key),
             ": filter | ".into(),
             "g".bold().fg(config.color_keybind_key),
@@ -187,7 +199,9 @@ impl App {
             "r".bold().fg(config.color_keybind_key),
             ": reply | ".into(),
             "x".bold().fg(config.color_keybind_key),
-            ": clear | ".into(),
+            ": flush | ".into(),
+            "t".bold().fg(config.color_keybind_key),
+            ": conversation | ".into(),
             "s".bold().fg(config.color_keybind_key),
             "/".dim(),
             "space".bold().fg(config.color_keybind_key),
@@ -210,10 +224,10 @@ impl App {
             ": navigate".into(),
         ]));
 
-        // ThreadView key hints
-        self.cached_thread_view_key_hints = Some(Line::from(vec![
+        // ConversationView key hints
+        self.cached_conversation_view_key_hints = Some(Line::from(vec![
             "Esc".bold().fg(config.color_keybind_key),
-            ": exit thread view".into(),
+            ": exit conversation view".into(),
         ]));
 
         // GroupingSelection key hints

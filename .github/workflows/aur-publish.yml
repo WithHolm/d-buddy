@@ -1,0 +1,38 @@
+# name: Publish to AUR
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# jobs:
+#   publish:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+#         with:
+#           # We need to fetch all commits to get the correct version number
+#           fetch-depth: 0
+
+#       - name: Publish to AUR
+#         uses: KSXGitHub/github-actions-deploy-aur@v2.6.0
+#         with:
+#           # The name of the package in the AUR
+#           pkgname: d-buddy-git
+
+#           # The path to the PKGBUILD file
+#           pkgbuild: ./pkgbuild/PKGBUILD
+
+#           # The commit message for the AUR repository
+#           commit_message: "Update to v${{ steps.version.outputs.version }}"
+
+#           # The username and email for the commit
+#           commit_username: ${{ github.actor }}
+#           commit_email: ${{ github.actor }}@users.noreply.github.com
+
+#           # The SSH private key for pushing to the AUR
+#           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+#           # Set this to "true" if you are using an RSA key
+#           # ssh_key_type: rsa

@@ -201,9 +201,10 @@ async fn run(
         let loop_timer = Instant::now();
         let _main_loop_span = tracing::debug_span!("main_loop").entered();
 
-        // Drain messages from channels
+        let mut new_messages_received = false;
         while let Ok(item) = app.poll_session_messages() {
             app.add_session_item(item);
+            new_messages_received = true;
         }
         if app.session_items_len() > config.max_messages {
             let excess = app.session_items_len() - config.max_messages;
@@ -212,6 +213,7 @@ async fn run(
 
         while let Ok(item) = app.poll_system_messages() {
             app.add_system_item(item);
+            new_messages_received = true;
         }
         if app.system_items_len() > config.max_messages {
             let excess = app.system_items_len() - config.max_messages;
@@ -264,9 +266,10 @@ async fn run(
                 app.filtered_and_sorted_items = processed_messages
                     .into_iter() // Use into_iter to consume the vector
                     .filter(|item| match app.mode {
-                        Mode::ThreadView => {
-                            if let Some(thread_serial) = &app.thread_serial {
-                                item.serial == *thread_serial || item.reply_serial == *thread_serial
+                        Mode::ConversationView => {
+                            if let Some(conversation_serial) = &app.conversation_serial {
+                                item.serial == *conversation_serial
+                                    || item.reply_serial == *conversation_serial
                             } else {
                                 false
                             }
@@ -342,9 +345,13 @@ async fn run(
                 });
             }
 
-            // BUGFIX: Ensure an item is selected by default if the list is not empty
-
-            if app.list_state.selected().is_none() && !app.filtered_and_sorted_items.is_empty() {
+            if new_messages_received && app.follow {
+                if !app.filtered_and_sorted_items.is_empty() {
+                    let new_index = app.filtered_and_sorted_items.len() - 1;
+                    app.list_state.select(Some(new_index));
+                }
+            } else if app.list_state.selected().is_none() && !app.filtered_and_sorted_items.is_empty() {
+                // BUGFIX: Ensure an item is selected by default if the list is not empty
                 let _list_selection_span = tracing::info_span!("list_selection_init").entered();
                 app.list_state.select(Some(0));
             }

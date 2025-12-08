@@ -319,6 +319,13 @@ pub fn ui(
         title_spans.extend(filter_line);
     }
 
+    if app.follow {
+        title_spans.extend(Line::from(vec![
+            Span::raw(" | "),
+            Span::styled("FOLLOW", Style::default().fg(Color::Green).bold()),
+        ]));
+    }
+
     // Add debug item count
     if config.enable_debug_ui {
         let selected = app
@@ -638,20 +645,21 @@ fn render_status_bar(frame: &mut Frame, app: &mut App, config: &Config, area: Re
             )
             .block(Block::default().borders(Borders::ALL).title("Autofilter"))
         }
-        Mode::ThreadView => {
-            let _span = tracing::info_span!("render_bottom_keybinds_thread_view").entered();
-            let thread_serial_display = app.thread_serial.as_deref().unwrap_or("N/A");
-            let mut thread_view_line = Line::from(vec![
-                Span::raw("Thread View (Serial: "),
+        Mode::ConversationView => {
+            let _span = tracing::info_span!("render_bottom_keybinds_conversation_view").entered();
+            let conversation_serial_display = app.conversation_serial.as_deref().unwrap_or("N/A");
+            let mut conversation_view_line = Line::from(vec![
+                Span::raw("Conversation View (Serial: "),
                 Span::styled(
-                    thread_serial_display,
+                    conversation_serial_display,
                     Style::default().fg(config.color_thread_serial),
                 ),
                 Span::raw(") | "),
             ]);
-            thread_view_line.extend(app.cached_thread_view_key_hints.as_ref().unwrap().clone());
-            Paragraph::new(thread_view_line)
-                .block(Block::default().borders(Borders::ALL).title("Thread View"))
+            conversation_view_line
+                .extend(app.cached_conversation_view_key_hints.as_ref().unwrap().clone());
+            Paragraph::new(conversation_view_line)
+                .block(Block::default().borders(Borders::ALL).title("Conversation View"))
         }
         Mode::GroupingSelection => {
             let _span = tracing::info_span!("render_bottom_keybinds_grouping_selection").entered();

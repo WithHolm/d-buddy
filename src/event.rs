@@ -41,16 +41,23 @@ pub async fn handle_event(
                         };
                         app.list_state.select(None); // Reset selection
                     }
-                    KeyCode::Char('t') => {
+                    KeyCode::Char('T') => {
                         app.use_relative_time = !app.use_relative_time;
                     }
-                    KeyCode::Char('x') => {
+                    KeyCode::Char('t') => {
                         if let Some(selected) = app.list_state.selected() {
                             if let Some(item) = app.filtered_and_sorted_items.get(selected) {
-                                app.thread_serial = Some(item.serial.clone());
-                                app.mode = Mode::ThreadView;
+                                app.conversation_serial = Some(item.serial.clone());
+                                app.mode = Mode::ConversationView;
                             }
                         }
+                    }
+                    KeyCode::Char('x') => {
+                        app.clear_session_items();
+                        app.clear_system_items();
+                        app.filtered_and_sorted_items.clear();
+                        app.list_state.select(None);
+                        app.status_message = "Message lists cleared.".to_string();
                     }
                     KeyCode::Char('g') => {
                         app.mode = Mode::GroupingSelection;
@@ -61,8 +68,17 @@ pub async fn handle_event(
                     KeyCode::Char('f') => {
                         app.mode = Mode::Filtering;
                     }
+                    KeyCode::Char('F') => {
+                        app.follow = !app.follow;
+                        app.status_message = if app.follow {
+                            "Follow mode enabled.".to_string()
+                        } else {
+                            "Follow mode disabled.".to_string()
+                        };
+                    }
                     KeyCode::Up => {
                         if !app.filtered_and_sorted_items.is_empty() {
+                            app.follow = false;
                             let i = match app.list_state.selected() {
                                 Some(i) => i.saturating_sub(1),
                                 None => 0,
@@ -75,6 +91,7 @@ pub async fn handle_event(
                     }
                     KeyCode::Down => {
                         if !app.filtered_and_sorted_items.is_empty() {
+                            app.follow = false;
                             let current_selected_before = app.list_state.selected();
                             tracing::debug!(
                                 "Down: current_selected_before = {:?}",
@@ -184,11 +201,13 @@ pub async fn handle_event(
                     }
                     KeyCode::PageDown => {
                         if app.show_details {
+                            app.follow = false;
                             app.detail_scroll_request = Some(10);
                         }
                     }
                     KeyCode::PageUp => {
                         if app.show_details {
+                            app.follow = false;
                             app.detail_scroll_request = Some(-10);
                         }
                     }
@@ -375,18 +394,11 @@ pub async fn handle_event(
                     _ => {} // Ignore other keys
                 }
             }
-            Mode::ThreadView => {
+            Mode::ConversationView => {
                 if key.code == KeyCode::Esc {
-                    app.thread_serial = None;
+                    app.conversation_serial = None;
                     app.mode = Mode::Normal;
                 }
-                // match key.code {
-                //     KeyCode::Esc => {
-                //         app.thread_serial = None;
-                //         app.mode = Mode::Normal;
-                //     }
-                //     _ => {} // Ignore other keys for now
-                // }
             }
         }
     }
